@@ -14,5 +14,5 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["verify.ts", "lib/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
+	"include": ["verify.ts", "sync.ts", "lib/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }
