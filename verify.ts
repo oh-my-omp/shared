@@ -33,11 +33,12 @@ async function verify(root: string): Promise<0 | 1> {
 		case "declared": {
 			const states = await compareCopies(copyPlans(root, SRC_DIR, read.declaration));
 			const bad = states.filter((s) => s.kind !== "match");
+			const copies = (n: number) => `${n} ${n === 1 ? "copy" : "copies"}`;
 			if (bad.length === 0) {
-				console.log(`${root}: ${states.length} copies match shared ${commit}`);
+				console.log(`${root}: ${copies(states.length)} ${states.length === 1 ? "matches" : "match"} shared ${commit}`);
 				return 0;
 			}
-			console.log(`${root}: ${bad.length} of ${states.length} copies do not match shared ${commit}:`);
+			console.log(`${root}: ${bad.length} of ${copies(states.length)} ${bad.length === 1 ? "does" : "do"} not match shared ${commit}:`);
 			for (const s of bad) console.log(`  ${s.kind}: ${path.relative(root, s.plan.copy)} (shared src/${s.plan.file})`);
 			return 1;
 		}
