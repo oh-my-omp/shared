@@ -2,7 +2,7 @@
 // plain `fetch`; a non-2xx answer other than the 404s the callers ask about is thrown as `GitHubError`, which the
 // sync turns into a per-repository failure line.
 
-import { z } from "zod";
+import { z, type zod } from "@oh-my-pi/pi-coding-agent";
 
 const API = "https://api.github.com";
 
@@ -45,7 +45,7 @@ export class GitHub {
 		return response;
 	}
 
-	private async json<S extends z.ZodType>(schema: S, method: string, path: string, body?: unknown): Promise<z.infer<S>> {
+	private async json<T>(schema: zod.ZodLikeSchema<T>, method: string, path: string, body?: unknown): Promise<T> {
 		const response = await this.call(method, path, body);
 		if (!response.ok) throw new GitHubError(response.status, method, path, await response.text());
 		return schema.parse(await response.json());
