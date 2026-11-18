@@ -77,12 +77,23 @@ describe("readTodos", () => {
 		expect(readTodos(events, AGENT)).toEqual({ kind: "no_reply" });
 	});
 
-	test("a request the producer does not recognize yields no_reply", () => {
+	test("a listener that never replies yields no_reply and saw a well-formed request", () => {
+		const seen: unknown[] = [];
 		const events = bus((data) => {
-			expect(isTodoReadRequest(data)).toBe(true);
-			expect(isTodoReadRequest({ agentId: "  ", reply: () => {} })).toBe(false);
-			expect(isTodoReadRequest({ agentId: AGENT })).toBe(false);
+			seen.push(data);
 		});
 		expect(readTodos(events, AGENT)).toEqual({ kind: "no_reply" });
+		expect(seen).toHaveLength(1);
+		expect(isTodoReadRequest(seen[0])).toBe(true);
+	});
+});
+
+describe("isTodoReadRequest", () => {
+	test("rejects a blank agentId", () => {
+		expect(isTodoReadRequest({ agentId: "  ", reply: () => {} })).toBe(false);
+	});
+
+	test("rejects a request without reply", () => {
+		expect(isTodoReadRequest({ agentId: AGENT })).toBe(false);
 	});
 });
