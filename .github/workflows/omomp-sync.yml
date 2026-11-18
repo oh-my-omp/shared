@@ -1,0 +1,53 @@
+name: omomp-sync
+
+# Push sync: after every push to main (and on manual dispatch), opens, updates or closes one sync pull request per
+# repository of the oh-my-omp organization that declares shared files in omomp-shared.json. The logic is sync.ts
+# of this repository; its header lists the outcomes. The identity is the organization's GitHub App
+# oh-my-omp-shared-sync: pull requests opened with its installation token trigger the consumers' own
+# pull_request workflows, which a GITHUB_TOKEN-opened pull request would not.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Branch to use as the base in every repository (repositories without it are skipped); empty means each repository's default branch.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omomp-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+        with:
+          persist-credentials: false
+
+      - uses: actions/create-github-app-token@main
+        id: app
+        with:
+          app-id: ${{ secrets.OMOMP_SYNC_APP_ID }}
+          private-key: ${{ secrets.OMOMP_SYNC_APP_PRIVATE_KEY }}
+          owner: oh-my-omp
+
+      - uses: oven-sh/setup-bun@main
+        with:
+          bun-version: latest
+
+      - name: Install dependencies (frozen bun.lock)
+        run: bun install --frozen-lockfile
+
+      - name: Sync
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          BASE: ${{ inputs.base }}
+          SHARED_COMMIT: ${{ github.sha }}
+        run: bun sync.ts

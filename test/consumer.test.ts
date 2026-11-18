@@ -102,7 +102,7 @@ describe("shared src/ boundary", () => {
 			const code = await Bun.file(path.join(SRC, file)).text();
 			for (const m of code.matchAll(/\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/g)) {
 				const spec = m[1] ?? m[2] ?? "";
-				const allowed = spec.startsWith("./") || spec.startsWith("node:") || spec.startsWith("@oh-my-pi/") || spec === "zod";
+				const allowed = spec.startsWith("./") || spec.startsWith("node:") || spec.startsWith("@oh-my-pi/");
 				if (!allowed) bad.push(`${file}: ${spec}`);
 			}
 			for (const spec of relativeImports(code)) if (spec.startsWith("../")) bad.push(`${file}: ${spec}`);

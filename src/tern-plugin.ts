@@ -24,8 +24,8 @@
 import { type Stats, statSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { z, type zod } from "@oh-my-pi/pi-coding-agent";
 import { ptree } from "@oh-my-pi/pi-utils";
-import { z } from "zod";
 
 /** The `tern plugin` step a failure belongs to. */
 export type TernPluginStage = "find" | "dir" | "list" | "install" | "link" | "reload" | "remove" | "unlink" | "verify";
@@ -174,13 +174,13 @@ async function runTernPlugin(tern: string, args: readonly string[], options: Ter
 }
 
 /** Run a verb that answers JSON, then apply `schema`; parse problems report the verb's stage. */
-async function jsonVerb<S extends z.ZodType>(
+async function jsonVerb<T>(
 	tern: string,
 	stage: TernPluginStage,
 	args: readonly string[],
 	options: TernFindOptions,
-	schema: S,
-): Promise<TernResult<z.infer<S>>> {
+	schema: zod.ZodLikeSchema<T>,
+): Promise<TernResult<T>> {
 	const outcome = await runTernPlugin(tern, args, options);
 	if (outcome.kind === "failed") return fail(stage, `tern plugin ${args.join(" ")} ${outcome.message}`);
 	let json: unknown;
@@ -194,7 +194,7 @@ async function jsonVerb<S extends z.ZodType>(
 		return fail(
 			stage,
 			`tern plugin ${args.join(" ")} answered unexpected JSON: ${parsed.error.issues
-				.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+				.map((issue) => `${issue.path.map(String).join(".") || "<root>"}: ${issue.message}`)
 				.join("; ")}`,
 		);
 	}
