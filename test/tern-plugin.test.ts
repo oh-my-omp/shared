@@ -30,21 +30,27 @@ describe("findTern", () => {
 		expect(findTern({ env: { PATH: "" } })).toEqual({ kind: "not_installed" });
 	});
 
-	test("on win32 it probes PATHEXT entries in order", () => {
-		// .EXE is not a PATHEXT member here: .BAT matches first because PATHEXT order rules.
-		const both = binDir("win-both", "tern.BAT", "@echo off\n", 0o644);
-		writeFileSync(path.join(both, "tern.EXE"), "", { mode: 0o644 });
-		const found = findTern({
-			env: { PATH: both, PATHEXT: ".BAT;.EXE" },
-			platform: "win32",
-		});
-		expect(found).toEqual({ kind: "found", path: path.join(both, "tern.BAT"), cli: expect.anything() });
+	test("on win32 a .bat or .cmd shim is never chosen, even first in PATHEXT", () => {
+		const both = binDir("win-both", "tern.bat", "@echo off\n", 0o644);
+		writeFileSync(path.join(both, "tern.cmd"), "@echo off\n", { mode: 0o644 });
+		writeFileSync(path.join(both, "tern.exe"), "", { mode: 0o644 });
+		const found = findTern({ env: { PATH: both, PATHEXT: ".BAT;.CMD;.EXE" }, platform: "win32" });
+		expect(found).toEqual({ kind: "found", path: path.join(both, "tern.exe"), cli: expect.anything() });
+		const shimOnly = binDir("win-shim", "tern.cmd", "@echo off\n", 0o644);
+		expect(findTern({ env: { PATH: shimOnly, PATHEXT: ".CMD;.EXE" }, platform: "win32" })).toEqual({ kind: "not_installed" });
+	});
+
+	test("on win32 it follows PATHEXT order between .com and .exe", () => {
+		const dir = binDir("win-order", "tern.com", "", 0o644);
+		writeFileSync(path.join(dir, "tern.exe"), "", { mode: 0o644 });
+		const found = findTern({ env: { PATH: dir, PATHEXT: ".COM;.EXE" }, platform: "win32" });
+		expect(found).toEqual({ kind: "found", path: path.join(dir, "tern.com"), cli: expect.anything() });
 	});
 
 	test("on win32 it finds tern.exe even when PATHEXT omits .EXE", () => {
-		const dir = binDir("win-exe", "tern.EXE", "", 0o644);
-		const found = findTern({ env: { PATH: dir, PATHEXT: ".COM;.CMD" }, platform: "win32" });
-		expect(found).toEqual({ kind: "found", path: path.join(dir, "tern.EXE"), cli: expect.anything() });
+		const dir = binDir("win-exe", "tern.exe", "", 0o644);
+		const found = findTern({ env: { PATH: dir, PATHEXT: ".CMD" }, platform: "win32" });
+		expect(found).toEqual({ kind: "found", path: path.join(dir, "tern.exe"), cli: expect.anything() });
 	});
 
 	test("on win32 an unset PATHEXT falls back to the executable extensions", () => {

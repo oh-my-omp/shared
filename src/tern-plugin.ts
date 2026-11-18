@@ -2,9 +2,10 @@
  * Adapter around Tern's own `tern plugin` CLI: Tern owns registration and
  * installation, this file only asks it questions and relays its answers.
  *
- * - `findTern` locates the `tern` executable on `PATH` — on Windows probing
- *   every `PATHEXT` extension (at least `.exe`) — and reports `not_installed`
- *   instead of throwing when it is absent.
+ * - `findTern` locates the `tern` executable on `PATH` — on Windows only the
+ *   `PATHEXT` extensions that start a program by argv (`.exe`, `.com`; `.exe`
+ *   even when PATHEXT omits it), never a `.bat`/`.cmd` shim that would need
+ *   cmd — and reports `not_installed` instead of throwing when it is absent.
  * - `TernPluginCli` runs `tern plugin <verb>` as an argument vector through the
  *   host's `ptree` spawn helper (`@oh-my-pi/pi-utils`), which is the host's
  *   argv spawn with a kill-the-tree deadline and captured output; nothing ever
@@ -104,21 +105,20 @@ const listSchema = z.object({
 });
 const installedSchema = z.object({ id: z.string(), version: z.string(), dir: absolutePath });
 
-/** Executable extensions probed on Windows when PATHEXT is unset (PATHEXT order), plus bare. */
-const WINDOWS_EXEC_EXTS = [".com", ".exe", ".bat", ".cmd"];
+/** Windows extensions that start a program by argv without cmd; PATHEXT may list others (`.BAT`, `.CMD`, scripts). */
+const WINDOWS_ARGV_EXTS = [".com", ".exe"];
 
-/** Extensions probed for `tern`: the platform's executable forms on Windows, the bare name elsewhere. */
+/** Extensions probed for `tern`: PATHEXT's argv-startable ones on Windows (in PATHEXT order, `.EXE` always), the bare name elsewhere. */
 function executableExtensions(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
 	if (platform !== "win32") return [""];
-	const pathext = env.PATHEXT;
-	if (pathext === undefined || pathext.trim() === "") return [...WINDOWS_EXEC_EXTS, ""];
-	const exts = pathext
+	const exts = (env.PATHEXT ?? "")
 		.split(";")
-		.map((ext) => ext.trim().toUpperCase())
-		.filter((ext) => ext.startsWith("."));
-	// `tern` is a native binary; `.exe` must be tried even when PATHEXT omits it.
-	if (!exts.includes(".EXE")) exts.push(".EXE");
-	return [...exts, ""];
+		.map((ext) => ext.trim().toLowerCase())
+		.filter((ext) => WINDOWS_ARGV_EXTS.includes(ext));
+	// `tern` is a native binary; `.exe` must be tried even when PATHEXT omits it. Windows file names are
+	// case-insensitive, so the lowercase probe finds `tern.EXE` too.
+	if (!exts.includes(".exe")) exts.push(".exe");
+	return exts;
 }
 
 function isFile(path: string): boolean {
@@ -244,11 +244,9 @@ function makeCli(tern: string, options: TernFindOptions): TernPluginCli {
 }
 
 /**
- * Find `tern` on PATH. POSIX checks the bare name; Windows checks every PATHEXT
- * extension in order (`.exe` guaranteed, falling back to .com/.exe/.bat/.cmd)
- * in each PATH directory. Note: a bare `tern` name that resolves to a `.cmd`
- * or `.bat` shim cannot be spawned without a shell and will fail at the verb's
- * stage; a native `tern.exe` is what this supports.
+ * Find `tern` on PATH. POSIX checks the bare name; Windows checks `tern.com`
+ * and `tern.exe` in PATHEXT order (`.exe` always) in each PATH directory and
+ * ignores `.bat`/`.cmd` shims, which only cmd can start.
  */
 export function findTern(options: TernFindOptions = {}): TernFindResult {
 	const env = options.env ?? process.env;
