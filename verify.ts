@@ -2,6 +2,7 @@
 // the files under `src/` of the shared checkout this script runs from. Exit 0: every copy matches, or the repository
 // declares nothing. Exit 1: a copy is missing or differs, or the declaration is invalid. Exit 2: usage error.
 
+import { statSync } from "node:fs";
 import path from "node:path";
 import { compareCopies, copyPlans, DECLARATION_FILE, readDeclaration } from "./lib/consumer.ts";
 
@@ -45,4 +46,9 @@ async function verify(root: string): Promise<0 | 1> {
 	}
 }
 
-process.exit(await verify(path.resolve(arg)));
+const root = path.resolve(arg);
+if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+	console.error(`verify.ts: ${root} is not a directory`);
+	process.exit(2);
+}
+process.exit(await verify(root));
