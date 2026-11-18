@@ -1,0 +1,17 @@
+{
+	"name": "omomp-shared",
+	"private": true,
+	"description": "Single source of code that several oh-my-omp repositories copy",
+	"type": "module",
+	"scripts": {
+		"check": "biome check . && tsc --noEmit",
+		"format": "biome check --write .",
+		"test": "bun test",
+		"verify": "bun verify.ts"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "latest",
+		"@types/bun": "latest",
+		"typescript": "latest"
+	}
+}
