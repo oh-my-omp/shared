@@ -11,7 +11,6 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const LANGUAGE_ENV_KEYS = [LANGUAGE_ENV, "LC_ALL", "LC_MESSAGES", "LANG"] as const;
 type LanguageEnvKey = (typeof LANGUAGE_ENV_KEYS)[number];
 
-/** Runs `run` with the language-related environment variables set (`undefined` deletes), restoring them afterwards. */
 function withLanguageEnv(vars: Partial<Record<LanguageEnvKey, string>>, run: () => void): void {
 	const saved = LANGUAGE_ENV_KEYS.map((key) => [key, process.env[key]] as const);
 	try {
@@ -31,10 +30,6 @@ function withLanguageEnv(vars: Partial<Record<LanguageEnvKey, string>>, run: () 
 
 let childIndex = 0;
 
-/**
- * Runs `script` as a Bun child process and returns its trimmed stdout.
- * `env` entries override `process.env`; `undefined` removes the variable.
- */
 async function runChild(script: string, env: Record<string, string | undefined>): Promise<string> {
 	const file = path.join(scratch, `child-${childIndex++}.ts`);
 	writeFileSync(file, script);

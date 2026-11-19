@@ -1,10 +1,5 @@
-// The changelog entry a sync PR adds: one top-level item under `## [Unreleased]` → `### Changed`, so the updated
-// copies count in the consumer's next daily release. Pure text transformation; the sync rebuilds its commit from
-// the consumer's base branch every time, so the entry is added to an unmodified file and never doubles.
-
 const UNRELEASED = "## [Unreleased]";
 
-/** `text` with `item` (one line, without the leading `- `) added under `## [Unreleased]` → `### Changed`. */
 export function addChangedItem(text: string, item: string): string {
 	const eol = text.includes("\r\n") ? "\r\n" : "\n";
 	const lines = text.split(/\r?\n/);

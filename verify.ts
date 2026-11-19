@@ -1,7 +1,3 @@
-// `bun verify.ts <consumer repository root>`: compares the copies a repository declares in `omomp-shared.json` with
-// the files under `src/` of the shared checkout this script runs from. Exit 0: every copy matches, or the repository
-// declares nothing. Exit 1: a copy is missing or differs, or the declaration is invalid. Exit 2: usage error.
-
 import { statSync } from "node:fs";
 import path from "node:path";
 import { compareCopies, copyPlans, DECLARATION_FILE, readDeclaration } from "./lib/consumer.ts";
@@ -19,7 +15,6 @@ if (arg === undefined || Bun.argv.length > 3) {
 	console.error("usage: bun verify.ts <consumer repository root>");
 	process.exit(2);
 }
-/** Prints the verdict for `root` and returns the exit code. */
 async function verify(root: string): Promise<0 | 1> {
 	const commit = sharedCommit();
 	const read = await readDeclaration(root, SRC_DIR);

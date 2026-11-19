@@ -17,7 +17,6 @@ function schemeHandler(scheme: string, content: string): ProtocolHandler {
 	};
 }
 
-/** Registration order of every scheme, split into the built-in prefix and the rest. */
 function schemeOrder(router: InternalUrlRouter): { builtin: string[]; other: string[] } {
 	const builtin: string[] = [];
 	const other: string[] = [];
@@ -38,7 +37,6 @@ test("registered schemes serve their URL, and non-built-in schemes sort by name 
 	const order = schemeOrder(router);
 	expect(order.builtin).toEqual(builtinOrder);
 	expect(order.other).toEqual(["alpha", "zeta"]);
-	// Reordering moved only positions; the handlers are the identical objects.
 	expect(router.getHandler("alpha")).toBe(alpha);
 	expect(router.getHandler("zeta")).toBe(zeta);
 	const resource = await router.resolve("alpha://x");
@@ -52,7 +50,6 @@ test("a built-in scheme is refused with the reason and keeps its handler", () =>
 	const result = registerInternalScheme(router, OWNER_A, hijack);
 	expect(result).toEqual({ kind: "builtin", reason: "omp owns skill://" });
 	expect(router.getHandler("skill")).toBe(original);
-	// A refused handler is not branded.
 	expect(Reflect.get(hijack, OWNER_BRAND)).toBeUndefined();
 });
 
@@ -84,17 +81,11 @@ test("another owner is refused with the holding owner; the same owner replaces i
 });
 
 test("ownership is recognized across two separately imported module instances", async () => {
-	// Each consumer plugin carries its own copy of internal-url.ts. Dynamic imports exercise the
-	// module boundary on purpose: Bun treats the ?v=2 specifier as a separate module instance, so
-	// the two copies share only the process-global Symbol.for registry. The specifier goes through
-	// a variable because tsc cannot resolve a query string in a literal module specifier.
 	const secondInstance = "../src/internal-url.ts?v=2";
 	const copyB: { registerInternalScheme: typeof registerInternalScheme } = await import(secondInstance);
 	expect(copyB.registerInternalScheme).not.toBe(registerInternalScheme);
 	const router = new InternalUrlRouter();
 	expect(registerInternalScheme(router, OWNER_A, schemeHandler("shared", "first body")).kind).toBe("registered");
-	// Copy B does not know this module's state, yet a different owner is still refused with the
-	// owner this module recorded, and the same owner still replaces.
 	expect(copyB.registerInternalScheme(router, OWNER_B, schemeHandler("shared", "hijack"))).toEqual({
 		kind: "held",
 		holder: { kind: "owner", id: OWNER_A },

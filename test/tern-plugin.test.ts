@@ -7,7 +7,6 @@ import { findTern, pluginCopyMatches, readPluginManifest } from "../src/tern-plu
 const scratch = mkdtempSync(path.join(tmpdir(), "tern-plugin-test-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-/** A temp dir containing a fake executable `tern` (or `tern<ext>`) with the given contents. */
 function binDir(name: string, file: string, contents: string, mode = 0o755): string {
 	const dir = mkdtempSync(path.join(scratch, `${name}-`));
 	writeFileSync(path.join(dir, file), contents, { mode });
@@ -15,7 +14,6 @@ function binDir(name: string, file: string, contents: string, mode = 0o755): str
 	return dir;
 }
 
-/** findTern env that keeps the real environment but puts `dir` alone on PATH. */
 function envWithPath(dir: string): NodeJS.ProcessEnv {
 	return { ...process.env, PATH: dir };
 }
@@ -66,8 +64,6 @@ describe("findTern", () => {
 	});
 });
 
-// Fixture captured verbatim from `tern plugin list --json` on macOS (2026-11-19),
-// trimmed to one entry and extended with the disabled and failed status shapes.
 const LIST_JSON = `{
   "plugins": [
     {
@@ -101,11 +97,8 @@ const LIST_JSON = `{
   "canvas": true
 }`;
 
-// Fixture captured verbatim from `tern plugin dir --json` on macOS (2026-11-19).
 const DIR_JSON = `{\n  "dir": "/Users/mouriya/Library/Application Support/Tern/plugins"\n}`;
 
-/** A fake `tern` script: argv[2] selects the verb, the case decides the answer. PATH keeps the
- * standard bins the script's commands (`cat`, `sleep`) need — no real `tern` lives there. */
 function fakeTern(name: string, script: string): NodeJS.ProcessEnv {
 	const dir = binDir(name, "tern", `#!/bin/sh\n${script}`);
 	return { ...process.env, PATH: `${dir}:/usr/bin:/bin` };

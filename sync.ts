@@ -1,14 +1,3 @@
-// `bun sync.ts`: the push sync. For every unarchived repository of the oh-my-omp organization whose base branch
-// holds an `omomp-shared.json`, compares the declared copies with `src/` of this shared checkout (the same
-// `lib/consumer.ts` judgment `verify.ts` uses) and keeps exactly one sync pull request per repository and base:
-// copies behind → one commit rebuilt on the base (the copies, plus one `## [Unreleased]` → `### Changed` item when
-// the repository has a root `CHANGELOG.md`) force-pushed to `omomp-shared-sync/<base>`, and a PR opened or updated;
-// copies equal → an open sync PR is closed. It never merges. One log line per repository says what happened.
-//
-// Environment: GH_TOKEN (the sync App's installation token), BASE (optional branch name: use it as the base in every
-// repository and skip repositories without it; empty means each repository's default branch), SHARED_COMMIT
-// (the shared commit being synced; defaults to this checkout's HEAD). Exit 1 when any repository failed.
-
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -59,7 +48,6 @@ function sharedCommit(): string {
 	return r.stdout.toString().trim();
 }
 
-/** A scratch consumer root holding the declaration and the declared copies as they are at `ref`. */
 async function materialize(gh: GitHub, repo: string, ref: string, declarationText: Uint8Array, scratch: string) {
 	const root = path.join(scratch, repo);
 	await mkdir(root, { recursive: true });

@@ -1,13 +1,8 @@
-// The consumer side of the copy mechanism: a repository's `omomp-shared.json` declaration, parsed and checked against
-// a shared `src/` tree, and the byte comparison of the copies it declares. `verify.ts` and the push sync both go
-// through these functions, so they never reach different conclusions about a repository.
-
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 
 export const DECLARATION_FILE = "omomp-shared.json";
 
-/** What a repository declares: one target directory (relative to the repository root) and file names relative to shared `src/`. */
 export type Declaration = { readonly directory: string; readonly files: readonly string[] };
 
 export type DeclarationRead =
@@ -15,7 +10,6 @@ export type DeclarationRead =
 	| { readonly kind: "invalid"; readonly problems: readonly string[] }
 	| { readonly kind: "declared"; readonly declaration: Declaration };
 
-/** One declared file: where its source lives in shared and where its copy lives in the consumer. */
 export type CopyPlan = { readonly file: string; readonly source: string; readonly copy: string };
 
 export type CopyState =
@@ -25,7 +19,6 @@ export type CopyState =
 
 const KEYS = ["directory", "files"] as const;
 
-/** Parses the declaration text: a JSON object with exactly `directory` (string) and `files` (non-empty array of distinct strings). */
 export function parseDeclaration(text: string): { ok: true; declaration: Declaration } | { ok: false; problems: string[] } {
 	let value: unknown;
 	try {
@@ -59,7 +52,6 @@ export function parseDeclaration(text: string): { ok: true; declaration: Declara
 	return { ok: true, declaration: { directory: directory as string, files: files as string[] } };
 }
 
-/** Every file under `srcDir`, as forward-slash paths relative to it. */
 export async function sourceFiles(srcDir: string): Promise<string[]> {
 	const entries = await readdir(srcDir, { recursive: true, withFileTypes: true });
 	return entries
@@ -71,7 +63,6 @@ export async function sourceFiles(srcDir: string): Promise<string[]> {
 const IMPORT_RE =
 	/(?:^|[^\w$.])(?:import|export)\s[^;]*?\bfrom\s*["']([^"']+)["']|(?:^|[^\w$.])import\s*\(\s*["']([^"']+)["']\s*\)|(?:^|[^\w$.])import\s+["']([^"']+)["']/g;
 
-/** The relative specifiers (`./x.ts`, `../y.ts`) a TypeScript source imports or re-exports, type-only imports included. */
 export function relativeImports(code: string): string[] {
 	const out: string[] = [];
 	for (const m of code.matchAll(IMPORT_RE)) {
@@ -81,13 +72,11 @@ export function relativeImports(code: string): string[] {
 	return out;
 }
 
-/** Where an import of `spec` from shared file `from` lands, relative to `src/`; null when it leaves `src/`. */
 export function resolveWithinSrc(from: string, spec: string): string | null {
 	const joined = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
 	return joined.startsWith("../") || joined === ".." || path.posix.isAbsolute(joined) ? null : joined;
 }
 
-/** Checks a parsed declaration against the consumer root and the shared `src/` tree. */
 export async function checkDeclaration(root: string, srcDir: string, declaration: Declaration): Promise<string[]> {
 	const problems: string[] = [];
 	const target = path.resolve(root, declaration.directory);
@@ -113,7 +102,6 @@ export async function checkDeclaration(root: string, srcDir: string, declaration
 	return problems;
 }
 
-/** Reads and checks `<root>/omomp-shared.json` against the shared `src/` tree. */
 export async function readDeclaration(root: string, srcDir: string): Promise<DeclarationRead> {
 	const file = Bun.file(path.join(root, DECLARATION_FILE));
 	if (!(await file.exists())) return { kind: "absent" };
@@ -123,7 +111,6 @@ export async function readDeclaration(root: string, srcDir: string): Promise<Dec
 	return problems.length > 0 ? { kind: "invalid", problems } : { kind: "declared", declaration: parsed.declaration };
 }
 
-/** The copies a valid declaration asks for. */
 export function copyPlans(root: string, srcDir: string, declaration: Declaration): CopyPlan[] {
 	return declaration.files.map((file) => ({
 		file,
@@ -132,7 +119,6 @@ export function copyPlans(root: string, srcDir: string, declaration: Declaration
 	}));
 }
 
-/** Compares each copy with its shared source byte for byte. */
 export async function compareCopies(plans: readonly CopyPlan[]): Promise<CopyState[]> {
 	return Promise.all(
 		plans.map(async (plan): Promise<CopyState> => {

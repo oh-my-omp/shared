@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isTodoReadRequest, readTodos, TODO_READ_EVENT, type TodoReadCounts, type TodoReadRequest } from "../src/todo-read.ts";
 
-/** In-process stand-in for the host EventBus: emit calls listeners synchronously. */
 function bus(...listeners: ((data: unknown) => void)[]): { emit(channel: string, data: unknown): void } {
 	return {
 		emit(channel, data) {
@@ -11,7 +10,6 @@ function bus(...listeners: ((data: unknown) => void)[]): { emit(channel: string,
 	};
 }
 
-/** Producer built the way the owner builds it: validate with the shared request parser, then reply. */
 function producer(reply: (request: TodoReadRequest) => unknown): (data: unknown) => void {
 	return (data) => {
 		if (!isTodoReadRequest(data)) return;

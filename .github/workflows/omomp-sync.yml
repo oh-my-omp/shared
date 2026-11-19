@@ -1,11 +1,5 @@
 name: omomp-sync
 
-# Push sync: after every push to main (and on manual dispatch), opens, updates or closes one sync pull request per
-# repository of the oh-my-omp organization that declares shared files in omomp-shared.json. The logic is sync.ts
-# of this repository; its header lists the outcomes. The identity is the organization's GitHub App
-# oh-my-omp-shared-sync: pull requests opened with its installation token trigger the consumers' own
-# pull_request workflows, which a GITHUB_TOKEN-opened pull request would not.
-
 on:
   push:
     branches: [main]

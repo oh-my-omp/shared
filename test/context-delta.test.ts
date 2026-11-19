@@ -1,8 +1,3 @@
-/**
- * Consumer-visible behavior of `createDeltaStream`, driven with session-entry fixtures: each test
- * builds the entries the host would persist, feeds the stream an `ExtensionContext` whose session
- * manager replays them, and asserts what the two delivery points emit.
- */
 import { describe, expect, test } from "bun:test";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { CompactionEntry, CustomMessageEntry, ExtensionContext, SessionEntry, SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
@@ -38,19 +33,16 @@ function base(parentId: string | null): { id: string; parentId: string | null; t
 	return { id: `e${ids}`, parentId, timestamp: "2026-11-19T00:00:00.000Z" };
 }
 
-/** A message entry holding an ordinary user message, as the host persists prompts. */
 function userEntry(parentId: string | null, content: string): SessionMessageEntry {
 	const message: AgentMessage = { role: "user", content, timestamp: 0 };
 	return { ...base(parentId), type: "message", message };
 }
 
-/** A message entry holding the developer message the host persists after a tool batch. */
 function developerEntry(parentId: string | null, content: string): SessionMessageEntry {
 	const message: AgentMessage = { role: "developer", content, attribution: "agent", timestamp: 0 };
 	return { ...base(parentId), type: "message", message };
 }
 
-/** A `custom_message` entry, what the host persists from an `atPrompt` result's `message`. */
 function customEntry(parentId: string | null, source: string, content: string): CustomMessageEntry {
 	return { ...base(parentId), type: "custom_message", customType: source, content, display: false, attribution: "agent" };
 }
@@ -59,11 +51,6 @@ function compactionEntry(parentId: string | null, firstKeptEntryId: string): Com
 	return { ...base(parentId), type: "compaction", summary: "summary", firstKeptEntryId, tokensBefore: 100 };
 }
 
-/**
- * The `ExtensionContext` the stream needs: only `sessionManager`, replaying `chain` from oldest to
- * newest. The double is complete for the surface `inProjection` reads; the cast acknowledges the
- * remaining `ExtensionContext` surface the stream never touches.
- */
 function contextOf(chain: SessionEntry[]): ExtensionContext {
 	const byId = new Map(chain.map((entry) => [entry.id, entry]));
 	const leaf = chain[chain.length - 1];
@@ -90,7 +77,6 @@ describe("atPrompt", () => {
 		const ctx = contextOf([userEntry(null, "hi")]);
 		const first = stream.atPrompt(ctx, text(BODY_ONE));
 		expect(first).toBeDefined();
-		// The host persists the result message as a custom_message entry.
 		const persisted = customEntry(ctx.sessionManager.getLeafId(), SOURCE, first?.message.content ?? "");
 		const again = stream.atPrompt(contextOf([userEntry(null, "hi"), persisted]), text(BODY_ONE));
 		expect(again).toBeUndefined();
@@ -102,7 +88,6 @@ describe("atPrompt", () => {
 		const first = customEntry(user.id, SOURCE, firstBlock(SOURCE, BODY_ONE));
 		const result = stream.atPrompt(contextOf([user, first]), text(BODY_TWO));
 		expect(result?.message.content).toBe(supersedeBlock(SOURCE, BODY_TWO));
-		// Persisted, the new block is the effective one: the same body is no longer sent.
 		const second = customEntry(first.id, SOURCE, result?.message.content ?? "");
 		expect(stream.atPrompt(contextOf([user, first, second]), text(BODY_TWO))).toBeUndefined();
 	});

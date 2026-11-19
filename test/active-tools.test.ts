@@ -36,8 +36,6 @@ describe("canonicalToolOrder", () => {
 
 	test("the non-builtin tail sorts by code point, not UTF-16 code unit", () => {
 		const registry = [tool("read", "builtin")];
-		// Under UTF-16 `<` every astral name (lead surrogates U+D800–U+DBFF)
-		// would sort before U+FF5E and U+FFFF.
 		expect(canonicalToolOrder(registry, ["\u{10000}", "～", "￿", "\u{1F600}"])).toEqual(["～", "￿", "\u{10000}", "\u{1F600}"]);
 	});
 

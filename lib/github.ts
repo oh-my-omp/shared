@@ -1,7 +1,3 @@
-// The GitHub REST calls the push sync makes, with the installation token of the org's sync App. Every call is a
-// plain `fetch`; a non-2xx answer other than the 404s the callers ask about is thrown as `GitHubError`, which the
-// sync turns into a per-repository failure line.
-
 import { z, type zod } from "@oh-my-pi/pi-coding-agent";
 
 const API = "https://api.github.com";
@@ -51,7 +47,6 @@ export class GitHub {
 		return schema.parse(await response.json());
 	}
 
-	/** Every repository of the owner organization. */
 	async repositories(): Promise<Repository[]> {
 		const out: Repository[] = [];
 		for (let page = 1; ; page++) {
@@ -65,7 +60,6 @@ export class GitHub {
 		}
 	}
 
-	/** The commit a branch points at, or null when the branch does not exist. */
 	async branchHead(repo: string, branch: string): Promise<{ commit: string; tree: string } | null> {
 		const response = await this.call("GET", `/repos/${this.owner}/${repo}/branches/${encodeURIComponent(branch)}`);
 		if (response.status === 404) return null;
@@ -76,7 +70,6 @@ export class GitHub {
 		return { commit: data.commit.sha, tree: data.commit.commit.tree.sha };
 	}
 
-	/** A file's bytes at `ref`, or null when it does not exist there (or is not a file). */
 	async file(repo: string, path: string, ref: string): Promise<Uint8Array | null> {
 		const encoded = path.split("/").map(encodeURIComponent).join("/");
 		const response = await this.call(
@@ -90,7 +83,6 @@ export class GitHub {
 		return new Uint8Array(await response.arrayBuffer());
 	}
 
-	/** Creates a commit on top of `parent` whose tree is `baseTree` with `entries` written as regular files. */
 	async commit(repo: string, o: { parent: string; baseTree: string; entries: readonly TreeEntry[]; message: string }): Promise<string> {
 		const tree = await this.json(SHA, "POST", `/repos/${this.owner}/${repo}/git/trees`, {
 			base_tree: o.baseTree,
@@ -104,7 +96,6 @@ export class GitHub {
 		return commit.sha;
 	}
 
-	/** Points `branch` at `sha`, creating it or force-moving it. */
 	async forceBranch(repo: string, branch: string, sha: string): Promise<void> {
 		const response = await this.call("PATCH", `/repos/${this.owner}/${repo}/git/refs/heads/${branch}`, { sha, force: true });
 		if (response.ok) return;
@@ -113,7 +104,6 @@ export class GitHub {
 		await this.json(REF, "POST", `/repos/${this.owner}/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: sha });
 	}
 
-	/** The open pull request from `head` (a branch of the same repository) into `base`, if any. */
 	async openPull(repo: string, head: string, base: string): Promise<PullRequest | null> {
 		const list = await this.json(
 			z.array(PULL),
