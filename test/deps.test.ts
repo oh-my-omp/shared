@@ -77,6 +77,6 @@ test("hostPackages lists installed @oh-my-pi packages once, without peers", () =
 });
 
 test("shimProblems finds host module declarations by line", () => {
-	const text = 'declare namespace Bun {}\ndeclare module "@oh-my-pi/pi-tui/tools" {\n}\ndeclare module "other" {}\n';
+	const text = 'declare namespace Bun {}\ndeclare module \x22@oh-my-pi/pi-tui/tools\x22 {\n}\ndeclare module "other" {}\n';
 	expect(shimProblems("a.d.ts", text)).toEqual([{ file: "a.d.ts", line: 2, module: "@oh-my-pi/pi-tui/tools" }]);
 });
