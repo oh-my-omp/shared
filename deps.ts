@@ -40,7 +40,9 @@ async function check(manifest: Manifest | undefined): Promise<0 | 1> {
 	const lines: string[] = [];
 	if (manifest !== undefined) for (const problem of dependencyProblems(manifest)) lines.push(describeDependencyProblem(problem));
 	for (const file of trackedSources()) {
-		for (const shim of shimProblems(file, await Bun.file(path.join(root, file)).text())) {
+		const source = Bun.file(path.join(root, file));
+		if (!(await source.exists())) continue;
+		for (const shim of shimProblems(file, await source.text())) {
 			lines.push(`${shim.file}:${shim.line} declares module ${shim.module}; import the host package's own types instead`);
 		}
 	}
