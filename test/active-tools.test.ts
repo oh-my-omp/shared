@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "@oh-my-pi/omptype/zod";
 import type { ExtensionAPI, ToolInfo } from "@oh-my-pi/pi-coding-agent";
-import { z } from "@oh-my-pi/pi-coding-agent";
 import { applyActiveTools, canonicalToolOrder } from "../src/active-tools.ts";
 
 const NO_PARAMS = z.object({});
