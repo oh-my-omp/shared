@@ -51,7 +51,19 @@ function compactionEntry(parentId: string | null, firstKeptEntryId: string): Com
 	return { ...base(parentId), type: "compaction", summary: "summary", firstKeptEntryId, tokensBefore: 100 };
 }
 
-function contextOf(chain: SessionEntry[]): ExtensionContext {
+function remoteCompactionEntry(parentId: string, replayThroughId: string): CompactionEntry {
+	return {
+		...base(parentId),
+		type: "compaction",
+		summary: "remote summary",
+		firstKeptEntryId: "",
+		providerReplayThroughEntryId: replayThroughId,
+		tokensBefore: 100,
+		preserveData: { openaiRemoteCompaction: { provider: "openai", replacementHistory: [] } },
+	};
+}
+
+function contextOf(chain: SessionEntry[], model?: { provider: string; api: string }): ExtensionContext {
 	const byId = new Map(chain.map((entry) => [entry.id, entry]));
 	const leaf = chain[chain.length - 1];
 	const sessionManager = {
@@ -59,7 +71,7 @@ function contextOf(chain: SessionEntry[]): ExtensionContext {
 		getEntry: (id: string) => byId.get(id),
 		getEntries: () => [...chain],
 	};
-	return { sessionManager } as unknown as ExtensionContext;
+	return { sessionManager, model } as unknown as ExtensionContext;
 }
 
 describe("atPrompt", () => {
@@ -134,6 +146,23 @@ describe("atPrompt", () => {
 		const kept = userEntry(dropped.id, "kept tail");
 		const compaction = compactionEntry(kept.id, kept.id);
 		const result = stream.atPrompt(contextOf([dropped, kept, compaction]), text(BODY_ONE));
+		expect(result?.message.content).toBe(firstBlock(SOURCE, BODY_ONE));
+	});
+
+	test("a carrier behind a remote compaction the current model cannot replay is still in context", () => {
+		const stream = createDeltaStream(SOURCE);
+		const carrier = customEntry(null, SOURCE, firstBlock(SOURCE, BODY_ONE));
+		const replayed = userEntry(carrier.id, "replayed through here");
+		const chain = [carrier, replayed, remoteCompactionEntry(replayed.id, replayed.id)];
+		expect(stream.atPrompt(contextOf(chain, { provider: "anthropic", api: "anthropic-messages" }), text(BODY_ONE))).toBeUndefined();
+	});
+
+	test("the same carrier is delivered again for a model that replays the remote compaction", () => {
+		const stream = createDeltaStream(SOURCE);
+		const carrier = customEntry(null, SOURCE, firstBlock(SOURCE, BODY_ONE));
+		const replayed = userEntry(carrier.id, "replayed through here");
+		const chain = [carrier, replayed, remoteCompactionEntry(replayed.id, replayed.id)];
+		const result = stream.atPrompt(contextOf(chain, { provider: "openai", api: "openai-responses" }), text(BODY_ONE));
 		expect(result?.message.content).toBe(firstBlock(SOURCE, BODY_ONE));
 	});
 
