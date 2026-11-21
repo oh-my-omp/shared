@@ -6,6 +6,7 @@
 		"includes": [
 			"verify.ts",
 			"sync.ts",
+			"release.ts",
 			"lib/**/*.ts",
 			"src/**/*.ts",
 			"src/**/*.json",
