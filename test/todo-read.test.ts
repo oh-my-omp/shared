@@ -21,7 +21,7 @@ const AGENT = "agent-357";
 
 describe("readTodos", () => {
 	test("an answering producer yields ok with counts summing to the list length", () => {
-		const counts: TodoReadCounts = { pending: 1, in_progress: 1, completed: 2, abandoned: 0, blocked: 1 };
+		const counts: TodoReadCounts = { pending: 1, in_progress: 1, completed: 2, abandoned: 1 };
 		const goal = { objective: "ship", measure: "tests pass", doneWhen: "green" };
 		const openItems = [
 			{ phase: "build", title: "wire it", explanation: "the reason" },
@@ -33,6 +33,24 @@ describe("readTodos", () => {
 		if (result.kind === "ok") {
 			expect(Object.values(result.counts).reduce((sum, n) => sum + n, 0)).toBe(5);
 		}
+	});
+
+	test("a reply carrying an extra status key yields ok with only the four statuses", () => {
+		const reply = { kind: "ok", goal: null, openItems: [], counts: { pending: 0, in_progress: 0, completed: 2, abandoned: 0, blocked: 1 } };
+		const events = bus(producer(() => reply));
+		expect(readTodos(events, AGENT)).toEqual({
+			kind: "ok",
+			goal: null,
+			openItems: [],
+			counts: { pending: 0, in_progress: 0, completed: 2, abandoned: 0 },
+		});
+	});
+
+	test("a reply missing one of the four statuses yields malformed naming counts", () => {
+		const events = bus(producer(() => ({ kind: "ok", goal: null, openItems: [], counts: { in_progress: 0, completed: 2, abandoned: 0 } })));
+		const result = readTodos(events, AGENT);
+		expect(result.kind).toBe("malformed");
+		if (result.kind === "malformed") expect(result.reason).toContain("counts");
 	});
 
 	test("no listener yields no_reply", () => {
@@ -55,7 +73,7 @@ describe("readTodos", () => {
 					{ phase: "p", title: "t", explanation: null },
 					{ phase: 1, title: "t", explanation: null },
 				],
-				counts: { pending: 0, in_progress: 0, completed: 0, abandoned: 0, blocked: 0 },
+				counts: { pending: 0, in_progress: 0, completed: 0, abandoned: 0 },
 			})),
 		);
 		const result = readTodos(events, AGENT);
