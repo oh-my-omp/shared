@@ -1,4 +1,5 @@
-import { z, type zod } from "@oh-my-pi/pi-coding-agent";
+import type * as zod from "@oh-my-pi/omptype/zod";
+import { z } from "@oh-my-pi/omptype/zod";
 
 const API = "https://api.github.com";
 

@@ -11,6 +11,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "latest",
+		"@oh-my-pi/omptype": "latest",
 		"@oh-my-pi/pi-agent-core": "latest",
 		"@oh-my-pi/pi-coding-agent": "latest",
 		"@oh-my-pi/pi-natives": "latest",

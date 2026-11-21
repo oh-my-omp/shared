@@ -1,7 +1,7 @@
 import { getAnthropicCompactionPayload } from "@oh-my-pi/pi-agent-core";
 import type { BeforeAgentStartEventResult, CompactionEntry, ExtensionContext, SessionEntry } from "@oh-my-pi/pi-coding-agent";
-import { resolveSessionLeafId } from "@oh-my-pi/pi-coding-agent";
 import { getOpenAiRemoteCompactionPayload } from "@oh-my-pi/pi-coding-agent/session/session-context";
+import { resolveSessionLeafId } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 
 export type Delta = { readonly kind: "none" } | { readonly kind: "text"; readonly body: string };
 
