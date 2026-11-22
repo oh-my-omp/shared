@@ -8,6 +8,7 @@ import type {
 	CompactionEntry,
 	ContextEvent,
 	ContextEventResult,
+	ExtensionAPI,
 	ExtensionContext,
 	SessionBeforeCompactEvent,
 	SessionCompactEvent,
@@ -34,6 +35,9 @@ import {
 
 type CompactHandoffModule = typeof import("../src/compact-handoff.ts");
 type AnyHandler = (event: unknown, ctx: ExtensionContext) => unknown;
+
+const _assertRealExtensionApiAssignable: (pi: ExtensionAPI) => CompactExtensionAPI = (pi) => pi;
+void _assertRealExtensionApiAssignable;
 
 function createMockHostRunner() {
 	const handlers = new Map<string, AnyHandler[]>();
