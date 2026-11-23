@@ -157,10 +157,10 @@ describe("compact-handoff", () => {
 		copy1.registerCompactHandoff(
 			pi1,
 			copy1.defineStatefulHarnessHandoff<{ count: number }>({
-				pluginId: "omp-todo-more",
+				pluginId: "omp-todo-ng",
 				captureState: () => ({ count: 4 }),
 				renderCompactPromptClaim: (s) => `Todo tree (${s.count} open items)`,
-				renderPostCompactInjection: () => ({ source: "omp-todo-more/planning", delivery: "plugin-managed" }),
+				renderPostCompactInjection: () => ({ source: "omp-todo-ng/planning", delivery: "plugin-managed" }),
 			}),
 		);
 		copy2.registerCompactContribution(
@@ -213,7 +213,7 @@ describe("compact-handoff", () => {
 
 		const res = await runner.emitCompacting({ type: "session.compacting", sessionId: "s1", messages: [] }, ctx);
 		const joined = res?.context?.join("\n") ?? "";
-		expect(joined).toContain("[omp-todo-more] Todo tree (4 open items)");
+		expect(joined).toContain("[omp-todo-ng] Todo tree (4 open items)");
 		expect(joined).toContain("[omp-actual-terminal] PTY sessions (3 live)");
 	});
 

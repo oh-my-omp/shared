@@ -149,7 +149,7 @@ test("registerToolTopics stores topics across module copies without registering 
 			inject: [{ onError: true }],
 		},
 	]);
-	copyB.registerToolTopics("omp-ask-more", [
+	copyB.registerToolTopics("omp-ask-ng", [
 		{
 			tool: "ask",
 			topic: "routing",
