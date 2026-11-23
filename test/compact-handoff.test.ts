@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AgentMessage, CompactionPreparation, FileOperations } from "@oh-my-pi/pi-agent-core";
 import type {
+	AgentStartEvent,
 	AutoCompactionEndEvent,
 	AutoCompactionStartEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	CompactionEntry,
-	ContextEvent,
-	ContextEventResult,
 	ExtensionAPI,
 	ExtensionContext,
 	SessionBeforeCompactEvent,
@@ -17,8 +16,9 @@ import type {
 	SessionEntry,
 } from "@oh-my-pi/pi-coding-agent";
 import {
-	buildExternalCompactionPrompt,
+	COMPACT_HANDOFF_REVISION,
 	COMPACT_REGISTRY_SYMBOL,
+	COMPACTION_PROMPT,
 	type CompactExtensionAPI,
 	computeSafePostCompactInsertIndex,
 	deferDuringCompaction,
@@ -31,7 +31,12 @@ import {
 	prunePreparationFileOpsInPlace,
 	registerCompactHandoff,
 	releaseCompactionBarrier,
+	SharedCompactCoordinator,
 } from "../src/compact-handoff.ts";
+
+const REVISION_SHA256: Readonly<Record<number, string>> = {
+	2: "77037984eead661df466ec7524524e33e54efc0fbdd74e830b42ac5c15663c3b",
+};
 
 type CompactHandoffModule = typeof import("../src/compact-handoff.ts");
 type AnyHandler = (event: unknown, ctx: ExtensionContext) => unknown;
@@ -85,17 +90,8 @@ function createMockHostRunner() {
 		async emitAutoEnd(event: AutoCompactionEndEvent, ctx: ExtensionContext) {
 			for (const h of handlers.get("auto_compaction_end") ?? []) await h(event, ctx);
 		},
-		async emitContext(event: ContextEvent, ctx: ExtensionContext): Promise<ContextEventResult | undefined> {
-			let messages = event.messages;
-			let modified = false;
-			for (const h of handlers.get("context") ?? []) {
-				const r = (await h({ ...event, messages }, ctx)) as ContextEventResult | undefined;
-				if (r?.messages) {
-					messages = r.messages;
-					modified = true;
-				}
-			}
-			return modified ? { messages } : undefined;
+		async emitAgentStart(event: AgentStartEvent, ctx: ExtensionContext) {
+			for (const h of handlers.get("agent_start") ?? []) await h(event, ctx);
 		},
 		async emitBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<BeforeAgentStartEventResult[]> {
 			const out: BeforeAgentStartEventResult[] = [];
@@ -271,6 +267,73 @@ describe("compact-handoff", () => {
 		expect(isCompacting(sm)).toBe(false);
 		expect(log[log.length - 1]).toBe("signal-abort-drain");
 		expect(releaseCompactionBarrier(sm)).toBe(0);
+
+		const failedManual = new AbortController();
+		await runner.emitBeforeCompact(
+			{
+				type: "session_before_compact",
+				preparation: makePreparation(makeFileOps([])),
+				branchEntries: [],
+				signal: failedManual.signal,
+			},
+			ctx,
+		);
+		expect(isCompacting(sm)).toBe(true);
+		expect(deferDuringCompaction(sm, "after-failed-manual", () => log.push("agent-start-drain"))).toBe(true);
+		await runner.emitAgentStart({ type: "agent_start" }, ctx);
+		expect(isCompacting(sm)).toBe(false);
+		expect(log[log.length - 1]).toBe("agent-start-drain");
+
+		await runner.emitAutoStart({ type: "auto_compaction_start", reason: "threshold", action: "remote" }, ctx);
+		await runner.emitAgentStart({ type: "agent_start" }, ctx);
+		expect(isCompacting(sm)).toBe(true);
+		await runner.emitAutoEnd({ type: "auto_compaction_end", action: "remote", result: undefined, aborted: false, willRetry: false }, ctx);
+		expect(isCompacting(sm)).toBe(false);
+	});
+
+	test("a newer revision at the registry key adopts the store and serves handlers attached by an older copy", async () => {
+		const runner = createMockHostRunner();
+		registerCompactHandoff(
+			runner.createPluginApi(),
+			defineStatelessNoiseGuard({ pluginId: "older-plugin", renderNoiseGuardDirective: () => "Ignore nags." }),
+		);
+		const current = getSharedCompactCoordinator();
+
+		class OlderCoordinator extends SharedCompactCoordinator {
+			override readonly revision = COMPACT_HANDOFF_REVISION - 1;
+		}
+		Reflect.set(globalThis, COMPACT_REGISTRY_SYMBOL, new OlderCoordinator(current.store));
+		const adopted = getSharedCompactCoordinator();
+		expect(adopted).not.toBeInstanceOf(OlderCoordinator);
+		expect(adopted.revision).toBe(COMPACT_HANDOFF_REVISION);
+		expect(adopted.store).toBe(current.store);
+		expect(adopted.listPluginIds()).toEqual(["older-plugin"]);
+
+		class NewerCoordinator extends SharedCompactCoordinator {
+			override readonly revision = COMPACT_HANDOFF_REVISION + 1;
+			override handleCompacting(): SessionCompactingResult {
+				return { context: ["served-by-newer"] };
+			}
+		}
+		Reflect.set(globalThis, COMPACT_REGISTRY_SYMBOL, new NewerCoordinator(adopted.store));
+		expect(getSharedCompactCoordinator()).toBeInstanceOf(NewerCoordinator);
+
+		const res = await runner.emitCompacting({ type: "session.compacting", sessionId: "s", messages: [] }, makeContext([]));
+		expect(res?.context).toEqual(["served-by-newer"]);
+		expect(runner.count("session.compacting")).toBe(1);
+
+		const legacyWithoutRevision = { register() {}, attachToHost() {}, isCompacting: () => false, deferDuringCompaction: () => false };
+		Reflect.set(globalThis, COMPACT_REGISTRY_SYMBOL, legacyWithoutRevision);
+		const replaced = getSharedCompactCoordinator();
+		expect(replaced.revision).toBe(COMPACT_HANDOFF_REVISION);
+		expect(Reflect.get(globalThis, COMPACT_REGISTRY_SYMBOL)).toBe(replaced);
+	});
+
+	test("COMPACT_HANDOFF_REVISION is the newest revision and names the current file content", async () => {
+		const text = await Bun.file(new URL("../src/compact-handoff.ts", import.meta.url)).text();
+		const sha = new Bun.CryptoHasher("sha256").update(text).digest("hex");
+		expect(Math.max(...Object.keys(REVISION_SHA256).map(Number))).toBe(COMPACT_HANDOFF_REVISION);
+		expect(REVISION_SHA256[COMPACT_HANDOFF_REVISION]).toBe(sha);
 	});
 
 	test("prunePreparationFileOpsInPlace strips ?q=/:jq:, filters external noise, and rescues top-20 recency-ranked repo files", () => {
@@ -343,14 +406,15 @@ describe("compact-handoff", () => {
 		expect(computeSafePostCompactInsertIndex([{ role: "user", content: "only", timestamp: 1 }])).toBe(0);
 	});
 
-	test("5-section prompt assembly and all 3 delivery modes (delta-stream, session-compact-message, plugin-managed) + hook error isolation", async () => {
-		const prompt = buildExternalCompactionPrompt({ isUpdate: true, customInstructions: "Keep SHAs" });
-		expect(prompt).toContain("## User Intent & Session Rulings");
-		expect(prompt).toContain("## Decisions & Ruled-Out Approaches");
-		expect(prompt).toContain("## Discovered Code Anchors & Contracts");
-		expect(prompt).toContain("## Landed Milestones & Active Verification State");
-		expect(prompt).toContain("## Handoff to Kept Tail");
-		expect(prompt).toContain("Additional focus: Keep SHAs");
+	test("one prompt for initial and update windows, one-line context items, both delivery modes, and hook error isolation", async () => {
+		expect(COMPACTION_PROMPT).toContain("## User Intent & Session Rulings");
+		expect(COMPACTION_PROMPT).toContain("## Decisions & Ruled-Out Approaches");
+		expect(COMPACTION_PROMPT).toContain("## Discovered Code Anchors & Contracts");
+		expect(COMPACTION_PROMPT).toContain("## Landed Milestones & Active Verification State");
+		expect(COMPACTION_PROMPT).toContain("## Handoff to Kept Tail");
+		expect(COMPACTION_PROMPT).toContain("When a `<previous-summary>` block appears above, update that summary");
+		expect(COMPACTION_PROMPT).not.toContain("Additional focus");
+		expect(COMPACTION_PROMPT).not.toMatch(/\d+k[- ]token/);
 
 		const runner = createMockHostRunner();
 		const pi = runner.createPluginApi();
@@ -371,22 +435,9 @@ describe("compact-handoff", () => {
 		registerCompactHandoff(
 			pi,
 			defineStatefulHarnessHandoff<{ ok: true }>({
-				pluginId: "splice-plugin",
-				captureState: () => ({ ok: true }),
-				renderCompactPromptClaim: () => "Splice state owned by splice-plugin",
-				renderPostCompactInjection: () => ({
-					source: "splice-plugin/state",
-					delivery: "session-compact-message",
-					content: "splice-body",
-				}),
-			}),
-		);
-		registerCompactHandoff(
-			pi,
-			defineStatefulHarnessHandoff<{ ok: true }>({
 				pluginId: "managed-plugin",
 				captureState: () => ({ ok: true }),
-				renderCompactPromptClaim: () => "Managed state owned by managed-plugin",
+				renderCompactPromptClaim: () => "Managed state owned by managed-plugin\nacross two lines",
 				renderPostCompactInjection: () => ({
 					source: "managed-plugin/state",
 					delivery: "plugin-managed",
@@ -419,38 +470,19 @@ describe("compact-handoff", () => {
 		};
 		const ctx = makeContext([keptUser, cmpEntry]);
 
-		// Calling `session.compacting` directly without `session_before_compact` builds fallback snapshot cleanly
 		const compactingRes = await runner.emitCompacting({ type: "session.compacting", sessionId: "s3", messages: [] }, ctx);
-		const extra = compactingRes?.context?.join("\n") ?? "";
-		expect(extra).toContain("<harness-provided>");
-		expect(extra).toContain("[delta-plugin]");
-		expect(extra).toContain("[splice-plugin]");
-		expect(extra).toContain("[managed-plugin]");
-		expect(extra).toContain("<attribution-and-noise-guard>");
-		expect(extra).toContain("[tool-policy-nag] Ignore automated lint nags.");
+		expect(compactingRes?.prompt).toBe(COMPACTION_PROMPT);
+		const items = compactingRes?.context ?? [];
+		for (const item of items) {
+			expect(item).not.toContain("\n");
+			expect(item.startsWith("harness-provided [") || item.startsWith("noise-guard [")).toBe(true);
+		}
+		expect(items).toContain("harness-provided [delta-plugin] Delta state owned by delta-plugin");
+		expect(items).toContain("harness-provided [managed-plugin] Managed state owned by managed-plugin across two lines");
+		expect(items).toContain("noise-guard [tool-policy-nag] Ignore automated lint nags.");
+		expect(items.filter((item) => item.startsWith("harness-provided [omp-core]")).length).toBe(4);
 
 		await runner.emitCompact({ type: "session_compact", compactionEntry: cmpEntry, fromExtension: false }, ctx);
-
-		// 1. `session-compact-message` splices at fold-safe index 4 (and never duplicates if re-run!)
-		const baseMsgs = [
-			{
-				role: "compactionSummary",
-				summary: "s",
-				timestamp: 1,
-				providerPayload: { type: "anthropicCompaction", provider: "anthropic", content: "s", signature: "sig" },
-			},
-			{ role: "assistant", content: [], timestamp: 2 },
-			{ role: "toolResult", toolCallId: "t1", content: [], timestamp: 3 },
-			{ role: "toolResult", toolCallId: "t2", content: [], timestamp: 4 },
-			{ role: "user", content: "go", timestamp: 5 },
-		] as unknown as AgentMessage[];
-		const spliced1 = await runner.emitContext({ type: "context", messages: baseMsgs }, ctx);
-		expect(spliced1?.messages?.length).toBe(6);
-		expect((spliced1!.messages![4] as { customType?: string }).customType).toBe("splice-plugin/state");
-		const spliced2 = await runner.emitContext({ type: "context", messages: spliced1!.messages! }, ctx);
-		expect(spliced2).toBeUndefined(); // deduplicated
-
-		// 2. `delta-stream` delivers via real `createDeltaStream`, while `plugin-managed` is NOT double-injected!
 		const startRes = await runner.emitBeforeAgentStart(
 			{ type: "before_agent_start", reason: "prompt", prompt: "go", systemPrompt: [] },
 			ctx,
