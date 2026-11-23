@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls/router";
 import type { InternalResource, ProtocolHandler } from "@oh-my-pi/pi-coding-agent/internal-urls/types";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import {
 	clearToolTopics,
 	getToolTopicInjections,
@@ -9,6 +8,7 @@ import {
 	registerInternalScheme,
 	registerToolTopics,
 	resolveToolTopic,
+	toDocTopics,
 } from "../src/internal-url.ts";
 
 const OWNER_A = "tests/alpha";
@@ -121,7 +121,7 @@ test("a frozen handler throws instead of registering unbranded", () => {
 	expect(router.getHandler("frozen")).toBeUndefined();
 });
 
-test("registerToolTopics registers tool:// handler spec, promptDoc, and multiplexes across module copies", async () => {
+test("registerToolTopics stores topics across module copies without registering a tool:// scheme", async () => {
 	const secondInstance = "../src/internal-url.ts?v=3";
 	const copyB: {
 		registerToolTopics: typeof registerToolTopics;
@@ -159,25 +159,7 @@ test("registerToolTopics registers tool:// handler spec, promptDoc, and multiple
 		},
 	]);
 
-	const router = InternalUrlRouter.instance();
-	const handler = router.getHandler("tool");
-	expect(handler).toBeDefined();
-	expect(handler?.spec).toEqual({
-		backing: "virtual",
-		selectors: "lines",
-		immutable: true,
-		compactTranscript: true,
-	});
-	expect(
-		handler?.promptDoc?.({
-			skillUriAccess: true,
-			ruleCount: 0,
-			securityEnabled: false,
-			settingsApproval: false,
-			outReplies: false,
-			subagent: false,
-		}),
-	).toBe("`tool://` / `tool://<tool>` / `tool://<tool>/<topic>` — On-demand tool topic docs and usage guides.");
+	expect(InternalUrlRouter.instance().getHandler("tool")).toBeUndefined();
 
 	expect(listToolTopics().map((doc) => `${doc.tool}/${doc.topic}`)).toEqual(["ask/routing", "read/json"]);
 	expect(listToolTopics(undefined, { includeHidden: true }).map((doc) => `${doc.tool}/${doc.topic}`)).toEqual([
@@ -235,104 +217,30 @@ test("getToolTopicInjections returns only docs with non-empty inject rules inclu
 	expect(getToolTopicInjections().map((doc) => `${doc.tool}/${doc.topic}`)).toEqual(["bash/urls", "edit/hashline-recovery"]);
 });
 
-test("tool:// resolve handles tool://, tool://<tool>, tool://<tool>/<topic>, hidden topics, and ToolError misses", async () => {
-	registerToolTopics("omp-config", [
-		{ tool: "read", topic: "json", title: "JSON", when: "querying JSON", body: "# JSON\nUse jq." },
-		{
-			tool: "read",
-			topic: "failures",
-			title: "Failures",
-			when: "read errors",
-			body: "# Failures\nRetry.",
-			hiddenFromIndex: true,
-			inject: [{ onError: true }],
-		},
-		{
-			tool: "edit",
-			topic: "recovery",
-			title: "Recovery",
-			when: "edit fails",
-			body: "# Recovery\nRe-read.",
-			hiddenFromIndex: true,
-			inject: [{ onError: true }],
-		},
-	]);
-
-	const router = InternalUrlRouter.instance();
-
-	const root = await router.resolve("tool://");
-	expect(root.contentType).toBe("text/markdown");
-	expect(root.content).toContain("## read");
-	expect(root.content).toContain("tool://read/json — JSON (when: querying JSON)");
-	expect(root.content).not.toContain("tool://read/failures");
-	expect(root.content).toContain("## edit");
-	expect(root.content).toContain("tool://edit/recovery — Recovery (when: edit fails) [hidden]");
-
-	const readIndex = await router.resolve("tool://read");
-	expect(readIndex.content).toContain("tool://read/json — JSON (when: querying JSON)");
-	expect(readIndex.content).toContain("tool://read/failures — Failures (when: read errors) [hidden]");
-
-	const hiddenDoc = await router.resolve("tool://read/failures");
-	expect(hiddenDoc.content).toBe("# Failures\nRetry.");
-
-	await expect(router.resolve("tool://read/unknown")).rejects.toThrow(ToolError);
-	await expect(router.resolve("tool://read/unknown")).rejects.toThrow("Available: failures, json.");
-	await expect(router.resolve("tool://missing")).rejects.toThrow(ToolError);
-	await expect(router.resolve("tool://missing")).rejects.toThrow("Tools with topics: edit, read.");
-	await expect(router.resolve("tool://read/json/extra")).rejects.toThrow(ToolError);
-	await expect(router.resolve("tool://read?x=1")).rejects.toThrow(ToolError);
-
-	clearToolTopics();
-	const emptyRoot = await router.resolve("tool://");
-	expect(emptyRoot.content).toContain("No tool topics registered.");
-});
-
-test("tool:// complete and enumerate support autocomplete, grep, and glob", async () => {
-	registerToolTopics("omp-sessions", [
-		{ tool: "session_query", topic: "sql", title: "DuckDB SQL", when: "querying sessions", body: "SELECT * FROM events" },
-	]);
-	registerToolTopics("omp-actual-terminal", [
-		{ tool: "exec_command", topic: "pty-io", title: "PTY I/O", when: "interactive commands", body: "Use write_stdin" },
+test("toDocTopics builds a dynamic Record<string, string> supplier for native docTopics()", () => {
+	let lang = "en";
+	const docs = [
+		{ tool: "exec_command", topic: "pty-io", title: "PTY I/O", when: "interactive", body: "Use write_stdin." },
 		{
 			tool: "exec_command",
 			topic: "pty-lifecycle",
 			title: "PTY lifecycle",
-			when: "reclaim or exit",
-			body: "Use term://",
+			when: "reclaim",
+			body: () => `lifecycle:${lang}`,
 			hiddenFromIndex: true,
 		},
-	]);
+	];
+	const docTopics = toDocTopics(docs);
+	docs.push({ tool: "exec_command", topic: "mutated", title: "M", when: "M", body: "mutated" });
 
-	const router = InternalUrlRouter.instance();
-	const allCompletions = await router.complete("tool", "");
-	expect(allCompletions?.map((c) => c.value)).toEqual([
-		"exec_command",
-		"exec_command/pty-io",
-		"exec_command/pty-lifecycle",
-		"session_query",
-		"session_query/sql",
-	]);
+	expect(docTopics()).toEqual({
+		"pty-io": "Use write_stdin.",
+		"pty-lifecycle": "lifecycle:en",
+	});
 
-	const filteredCompletions = await router.complete("tool", "exec_command/");
-	expect(filteredCompletions?.map((c) => c.value)).toEqual(["exec_command/pty-io", "exec_command/pty-lifecycle"]);
-
-	const allLeaves = await router.enumerate("tool://");
-	expect(allLeaves).toEqual([
-		{ url: "tool://exec_command/pty-io", content: "Use write_stdin" },
-		{ url: "tool://exec_command/pty-lifecycle", content: "Use term://" },
-		{ url: "tool://session_query/sql", content: "SELECT * FROM events" },
-	]);
-
-	const oneToolLeaves = await router.enumerate("tool://session_query");
-	expect(oneToolLeaves).toEqual([{ url: "tool://session_query/sql", content: "SELECT * FROM events" }]);
-
-	const singleLeaf = await router.enumerate("tool://exec_command/pty-io");
-	expect(singleLeaf).toEqual([{ url: "tool://exec_command/pty-io", content: "Use write_stdin" }]);
-
-	if (allLeaves) {
-		for (const leaf of allLeaves) {
-			const resolved = await router.resolve(leaf.url);
-			expect(resolved.content).toBe(leaf.content);
-		}
-	}
+	lang = "zh";
+	expect(docTopics()).toEqual({
+		"pty-io": "Use write_stdin.",
+		"pty-lifecycle": "lifecycle:zh",
+	});
 });
