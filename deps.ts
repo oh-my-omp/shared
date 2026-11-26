@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { dependencyProblems, describeDependencyProblem, hostPackages, type Manifest, parseManifest, shimProblems } from "./lib/deps.ts";
+import { describeGateProblem, toolEntryGateProblems } from "./lib/tool-entry-gate.ts";
 
 const USAGE = "usage: bun deps.ts check|host <repository root>";
 
@@ -44,6 +45,9 @@ async function check(manifest: Manifest | undefined): Promise<0 | 1> {
 		if (!(await source.exists())) continue;
 		for (const shim of shimProblems(file, await source.text())) {
 			lines.push(`${shim.file}:${shim.line} declares module ${shim.module}; import the host package's own types instead`);
+		}
+		for (const gate of toolEntryGateProblems(file, await source.text())) {
+			lines.push(describeGateProblem(gate));
 		}
 	}
 	if (lines.length === 0) {
