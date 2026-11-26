@@ -250,11 +250,8 @@ function skipInterface(tokens: Token[], start: number): number {
 }
 
 function typeAliasEndsBefore(token: Token, depth: number): boolean {
-	if (depth > 0) return false;
-	if (token.kind === "identifier") {
-		return ["const", "let", "var", "function", "class", "return", "if", "export"].includes(token.text);
-	}
-	return token.text === "}";
+	if (depth > 0 || token.kind !== "identifier") return false;
+	return ["const", "let", "var", "function", "class", "return", "if", "export"].includes(token.text);
 }
 
 function skipTypeAlias(tokens: Token[], start: number): number {
@@ -266,7 +263,10 @@ function skipTypeAlias(tokens: Token[], start: number): number {
 		if (token.kind === "punct") {
 			if (OPENERS[token.text] === true) stack.push(token.text);
 			else if (CLOSERS[token.text] !== undefined) {
-				if (stack[stack.length - 1] === CLOSERS[token.text]) stack.pop();
+				if (stack[stack.length - 1] !== CLOSERS[token.text]) return index;
+				stack.pop();
+				index += 1;
+				continue;
 			} else if (token.text === ";" && stack.length === 0) return index + 1;
 		}
 		if (typeAliasEndsBefore(token, stack.length)) return index;
@@ -350,43 +350,91 @@ function customToolsValueProblem(tokens: Token[], valueStart: number): string | 
 	return `customTools element is not a direct omompTool(...) call; ${OMOMP_HINT}`;
 }
 
-function isAssignmentAt(tokens: Token[], index: number): boolean {
-	return textOf(tokens, index) === "=" && textOf(tokens, index + 1) !== "=" && textOf(tokens, index + 1) !== ">";
+function assignmentValueStart(tokens: Token[], index: number): number | undefined {
+	const first = textOf(tokens, index);
+	if (first === "=") {
+		const next = textOf(tokens, index + 1);
+		return next === "=" || next === ">" ? undefined : index + 1;
+	}
+	const compound = first === "?" || first === "|" || first === "&";
+	if (compound && textOf(tokens, index + 1) === first && textOf(tokens, index + 2) === "=") return index + 3;
+	return undefined;
 }
 
-function enclosingObjectClose(tokens: Token[], start: number): number | undefined {
+function enclosingClose(tokens: Token[], start: number): number | undefined {
 	let depth = 0;
 	for (let index = start; index < tokens.length; index++) {
 		const text = textOf(tokens, index);
 		if (text === undefined) return undefined;
 		if (OPENERS[text] === true) depth += 1;
 		else if (CLOSERS[text] !== undefined) {
-			if (depth === 0) return text === "}" ? index : undefined;
+			if (depth === 0) return index;
 			depth -= 1;
 		}
 	}
 	return undefined;
 }
 
-function closesDestructuringPattern(tokens: Token[], close: number): boolean {
+function enclosingOpen(tokens: Token[], start: number): number | undefined {
+	let depth = 0;
+	for (let index = start; index >= 0; index--) {
+		const text = textOf(tokens, index);
+		if (text === undefined) return undefined;
+		if (CLOSERS[text] !== undefined) depth += 1;
+		else if (OPENERS[text] === true) {
+			if (depth === 0) return index;
+			depth -= 1;
+		}
+	}
+	return undefined;
+}
+
+function isParameterList(tokens: Token[], open: number): boolean {
+	if (textOf(tokens, open) !== "(") return false;
+	const close = matchClose(tokens, open);
+	const after = textOf(tokens, close + 1);
+	return after === "{" || after === ":" || (after === "=" && textOf(tokens, close + 2) === ">");
+}
+
+function isTypeObject(tokens: Token[], open: number): boolean {
+	const before = textOf(tokens, open - 1);
+	if (before === "as" || before === "satisfies" || before === "|" || before === "&" || before === "<") return true;
+	return before === ":" && textOf(tokens, open - 2) === ")";
+}
+
+function isNotValueObject(tokens: Token[], open: number, close: number): boolean {
+	const before = textOf(tokens, open - 1);
+	if (before === "import" || before === "export" || textOf(tokens, close + 1) === "from") return true;
+	if (isTypeObject(tokens, open)) return true;
+	if (before === "?") return false;
+	const outer = enclosingOpen(tokens, open - 1);
+	if (outer !== undefined && (before === "(" || before === "," || before === ":") && isParameterList(tokens, outer)) return true;
 	const next = textOf(tokens, close + 1);
 	if (next === ":" || next === "of" || next === "in") return true;
-	if (next === "=") return isAssignmentAt(tokens, close + 1);
-	if (next !== ")") return false;
-	const after = textOf(tokens, close + 2);
-	return after === "{" || after === ":" || (after === "=" && textOf(tokens, close + 3) === ">");
+	return next === "=" && assignmentValueStart(tokens, close + 1) !== undefined;
 }
 
 function customToolsProblem(tokens: Token[], index: number): string | undefined {
+	const token = tokens[index];
 	const previous = textOf(tokens, index - 1);
 	const next = textOf(tokens, index + 1);
+	if (token?.kind === "literal" && previous === "[" && next === "]") {
+		const valueStart = assignmentValueStart(tokens, index + 2);
+		return valueStart === undefined ? undefined : customToolsValueProblem(tokens, valueStart);
+	}
+	if (token?.kind === "literal" && next !== ":") return undefined;
 	if (previous === ".") {
-		return isAssignmentAt(tokens, index + 1) ? customToolsValueProblem(tokens, index + 2) : undefined;
+		const valueStart = assignmentValueStart(tokens, index + 1);
+		return valueStart === undefined ? undefined : customToolsValueProblem(tokens, valueStart);
 	}
 	const shorthand = (previous === "{" || previous === ",") && (next === "," || next === "}");
 	if (next !== ":" && !shorthand) return undefined;
-	const close = enclosingObjectClose(tokens, index + 1);
-	if (close !== undefined && closesDestructuringPattern(tokens, close)) return undefined;
+	const open = enclosingOpen(tokens, index - 1);
+	const close = enclosingClose(tokens, index + 1);
+	if (open === undefined || close === undefined || textOf(tokens, open) !== "{" || textOf(tokens, close) !== "}") {
+		return undefined;
+	}
+	if (isNotValueObject(tokens, open, close)) return undefined;
 	if (next === ":") return customToolsValueProblem(tokens, index + 2);
 	return `customTools shorthand hides the value from the check; write customTools: [omompTool(...), ...] or ${OMOMP_HINT}`;
 }
@@ -435,7 +483,10 @@ export function toolEntryGateProblems(file: string, text: string): GateProblem[]
 				}
 			}
 		}
-		if (token.kind === "identifier" && token.text === "customTools") {
+		if (
+			(token.kind === "identifier" && token.text === "customTools") ||
+			(token.kind === "literal" && (token.text === '"customTools"' || token.text === "'customTools'"))
+		) {
 			const detail = customToolsProblem(tokens, index);
 			if (detail !== undefined) problems.push({ file, line: token.line, construction: "customTools", detail });
 		}

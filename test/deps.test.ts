@@ -156,6 +156,30 @@ describe("toolEntryGateProblems", () => {
 		expect(toolEntryGateProblems("seat.ts", "opts.customTools = [omompTool(a)];\n")).toEqual([]);
 	});
 
+	test("checks compound, bracket and ternary hand-offs of customTools", () => {
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools ??= [bare];\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools ||= seatTools;\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", 'opts["customTools"] = [bare];\n')).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", 'const o = { "customTools": seatTools };\n')).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", "const o = cond ? { customTools } : other;\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools ??= [omompTool(a)];\n")).toEqual([]);
+	});
+
+	test("ignores customTools in imports, exports and type positions", () => {
+		const text = [
+			'import { customTools } from "./seat.ts";',
+			"export { customTools };",
+			"function f({ customTools }, x) {}",
+			"function g(): { customTools: Tool[] } {}",
+			"const h = (): { customTools: Tool[] } => make();",
+			"const i = value as { customTools: Tool[] };",
+			"const j = value satisfies { customTools: Tool[] };",
+			"type K = { a: string } | { customTools: Tool[] };",
+			"pi.registerTool(omompTool(def));",
+		].join("\n");
+		expect(toolEntryGateProblems("seat.ts", text)).toEqual([]);
+	});
+
 	test("ignores customTools reads, comparisons, destructuring and parameter types", () => {
 		const text = [
 			"const { customTools } = options;",

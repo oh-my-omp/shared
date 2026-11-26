@@ -4,7 +4,11 @@ import { validateToolArguments } from "@oh-my-pi/pi-ai";
 type ObjectIR = Extract<IR, { k: "object" }>;
 type ArrayIR = Extract<IR, { k: "array" }>;
 
-const verbatimMarks = new WeakSet<object>();
+const verbatimKey: unique symbol = Symbol("omomp.verbatim");
+
+function hasVerbatimMark(target: object): boolean {
+	return Reflect.get(target, verbatimKey) === true;
+}
 
 function isEmbeddableSchema(value: unknown): value is EmbeddableSchema {
 	if (typeof value !== "function" && (typeof value !== "object" || value === null)) return false;
@@ -15,15 +19,17 @@ function isEmbeddableSchema(value: unknown): value is EmbeddableSchema {
 function markVerbatim(schema: unknown, visited: Set<unknown>): void {
 	if (!isEmbeddableSchema(schema) || visited.has(schema)) return;
 	visited.add(schema);
-	if (!verbatimMarks.has(schema.ir)) {
-		schema.ir = { ...schema.ir };
-		verbatimMarks.add(schema.ir);
+	if (!hasVerbatimMark(schema.ir)) {
+		const marked = { ...schema.ir };
+		Reflect.set(marked, verbatimKey, true);
+		schema.ir = marked;
 	}
-	verbatimMarks.add(schema);
+	Object.defineProperty(schema, verbatimKey, { value: true, enumerable: false, configurable: true });
 	for (const value of Object.values(schema)) {
 		if (isEmbeddableSchema(value)) markVerbatim(value, visited);
 	}
 	for (const key of Object.getOwnPropertySymbols(schema)) {
+		if (key === verbatimKey) continue;
 		const value: unknown = Reflect.get(schema, key);
 		if (isEmbeddableSchema(value)) markVerbatim(value, visited);
 	}
@@ -79,7 +85,7 @@ function assertNever(node: never): never {
 }
 
 function classifyField(node: IR, verbatim: boolean, depth: number): FieldType {
-	const own = verbatim || verbatimMarks.has(node);
+	const own = verbatim || hasVerbatimMark(node);
 	if (depth > 12) return { kind: "other", verbatim: own };
 	switch (node.k) {
 		case "string":
@@ -102,7 +108,7 @@ function classifyField(node: IR, verbatim: boolean, depth: number): FieldType {
 			return { kind: "other", verbatim: own };
 		}
 		case "sub":
-			return classifyField(node.schema.ir, own || verbatimMarks.has(node.schema), depth + 1);
+			return classifyField(node.schema.ir, own || hasVerbatimMark(node.schema), depth + 1);
 		case "morph":
 		case "refine": {
 			const inner = wrappedNode(node);

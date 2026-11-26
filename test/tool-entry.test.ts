@@ -253,6 +253,20 @@ describe("verbatim", () => {
 		expect(JSON.stringify(markedTb.toJsonSchema())).toBe(JSON.stringify(plainTb.toJsonSchema()));
 	});
 
+	test("a field described before optional stays verbatim in every tool that embeds it", async () => {
+		const chars = verbatim(z.string().describe("verbatim input").optional());
+		const tools = [makeTool(z.object({ chars })), makeTool(z.object({ chars, note: z.string().optional() }))];
+		for (const { definition, calls } of tools) {
+			await executeWith(definition, { chars: " " });
+			await executeWith(definition, { chars: "" });
+			expect(calls.map((call) => call.params)).toEqual([{ chars: " " }, {}]);
+		}
+		const described = verbatim(z.string().describe("required verbatim"));
+		const { definition, calls } = makeTool(z.object({ text: described }));
+		await executeWith(definition, { text: "\n" });
+		expect(calls[0]?.params).toEqual({ text: "\n" });
+	});
+
 	test("marking one schema does not poison other string schemas", async () => {
 		verbatim(z.string().optional().describe("input"));
 		const parameters = z.object({
