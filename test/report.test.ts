@@ -111,6 +111,14 @@ describe("errorHead", () => {
 		expect(errorHead("Resolving dependencies\nerror: Timeout downloading package manifest @oh-my-pi/pi-utils\n", "update")).toBe(
 			"error: Timeout downloading package manifest <package>",
 		);
+		const unavailable = (path: string): string => errorHead(`error: GET https://registry.npmjs.org/${path} - 503\n`, "install");
+		expect(unavailable("@opentelemetry/exporter-logs-otlp-proto/-/exporter-logs-otlp-proto-0.220.0.tgz")).toBe(
+			"error: GET https://registry.npmjs.org/<package> - 503",
+		);
+		expect(unavailable("yargs/-/yargs-18.2.0.tgz")).toBe(unavailable("@types/node/-/node-26.6.6.tgz"));
+		expect(errorHead("error: GET https://registry.npmjs.org/yargs - 404\n", "update")).toBe(
+			"error: GET https://registry.npmjs.org/<package> - 404",
+		);
 	});
 
 	test("keeps the wording of other stages and of lines that only mention a download", () => {

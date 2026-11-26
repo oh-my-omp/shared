@@ -42,7 +42,10 @@ const GATE_SUMMARY = z.object({
 export type GateSummary = z.infer<typeof GATE_SUMMARY>;
 
 const ERROR_LINE = /\berror\b|\bfail(?:ed|ure|s)?\b|✗|\(fail\)/i;
-const BUN_DOWNLOAD_ERROR = /^(error: \w+ downloading (?:tarball|package manifest)) \S+$/;
+const BUN_DOWNLOAD_ERRORS: readonly (readonly [RegExp, string])[] = [
+	[/^(error: \w+ downloading (?:tarball|package manifest)) \S+$/, "$1 <package>"],
+	[/^(error: GET https?:\/\/[^/\s]+\/)\S+( - \d{3})$/, "$1<package>$2"],
+];
 const DOWNLOADS_PACKAGES: Readonly<Record<Stage, boolean>> = {
 	deps: false,
 	install: true,
@@ -108,6 +111,10 @@ export function normalizeHead(line: string): string {
 		.slice(0, HEAD_MAX);
 }
 
+function withoutDownloadedPackage(line: string): string {
+	return BUN_DOWNLOAD_ERRORS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), line);
+}
+
 export function errorHead(log: string, stage: Stage): string {
 	const lines = Bun.stripANSI(log)
 		.split("\n")
@@ -115,7 +122,7 @@ export function errorHead(log: string, stage: Stage): string {
 		.filter((line) => line !== "");
 	const line = lines.find((candidate) => ERROR_LINE.test(candidate)) ?? lines.at(-1);
 	if (line === undefined) return "(no output)";
-	return normalizeHead(DOWNLOADS_PACKAGES[stage] ? line.replace(BUN_DOWNLOAD_ERROR, "$1 <package>") : line);
+	return normalizeHead(DOWNLOADS_PACKAGES[stage] ? withoutDownloadedPackage(line) : line);
 }
 
 export function excerpt(log: string): string {
