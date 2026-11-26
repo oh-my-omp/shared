@@ -42,6 +42,16 @@ const GATE_SUMMARY = z.object({
 export type GateSummary = z.infer<typeof GATE_SUMMARY>;
 
 const ERROR_LINE = /\berror\b|\bfail(?:ed|ure|s)?\b|✗|\(fail\)/i;
+const BUN_DOWNLOAD_ERROR = /^(error: \w+ downloading (?:tarball|package manifest)) \S+$/;
+const DOWNLOADS_PACKAGES: Readonly<Record<Stage, boolean>> = {
+	deps: false,
+	install: true,
+	update: true,
+	check: false,
+	test: false,
+	gate: false,
+	verify: false,
+};
 const HEAD_MAX = 300;
 const EXCERPT_HEAD_LINES = 40;
 const EXCERPT_TAIL_LINES = 80;
@@ -91,7 +101,6 @@ function readLog(logs: string, stage: Stage): string | undefined {
 export function normalizeHead(line: string): string {
 	return line
 		.replace(/\/home\/runner\/work\/[^/\s]+\/[^/\s]+\//g, "")
-		.replace(/\bdownloading (tarball|package manifest) \S+/g, "downloading $1 <package>")
 		.replace(/\b\d+(?:\.\d+)?\s?(?:ms|s)\b/g, "<duration>")
 		.replace(/\b[0-9a-f]{12,40}\b/g, "<sha>")
 		.replace(/\s+/g, " ")
@@ -99,13 +108,14 @@ export function normalizeHead(line: string): string {
 		.slice(0, HEAD_MAX);
 }
 
-export function errorHead(log: string): string {
+export function errorHead(log: string, stage: Stage): string {
 	const lines = Bun.stripANSI(log)
 		.split("\n")
 		.map((line) => line.trim())
 		.filter((line) => line !== "");
 	const line = lines.find((candidate) => ERROR_LINE.test(candidate)) ?? lines.at(-1);
-	return line === undefined ? "(no output)" : normalizeHead(line);
+	if (line === undefined) return "(no output)";
+	return normalizeHead(DOWNLOADS_PACKAGES[stage] ? line.replace(BUN_DOWNLOAD_ERROR, "$1 <package>") : line);
 }
 
 export function excerpt(log: string): string {
@@ -146,7 +156,7 @@ export function observeRun(input: {
 	return {
 		kind: "failed",
 		at,
-		head: gateHead !== undefined ? normalizeHead(gateHead) : log === undefined ? "(no log captured)" : errorHead(log),
+		head: gateHead !== undefined ? normalizeHead(gateHead) : log === undefined ? "(no log captured)" : errorHead(log, at.stage),
 		excerpt: log === undefined ? "(no log captured)" : excerpt(log),
 	};
 }

@@ -101,21 +101,31 @@ describe("errorHead", () => {
 	test("picks the first error line and normalizes ANSI, durations, runner paths and hashes", () => {
 		const log =
 			"\u001b[1mbun install\u001b[0m\nResolving [12.5ms]\nerror: Cannot find module './x' from '/home/runner/work/omp-config/omp-config/repository/a.ts' [340ms] in 0123456789abcdef\n";
-		expect(errorHead(log)).toBe("error: Cannot find module './x' from 'repository/a.ts' [<duration>] in <sha>");
+		expect(errorHead(log, "install")).toBe("error: Cannot find module './x' from 'repository/a.ts' [<duration>] in <sha>");
 	});
 
-	test("drops the package a bun download failed for and keeps the error kind", () => {
-		expect(errorHead("bun install v1.4.4\nerror: ConnectionRefused downloading tarball @opentelemetry/sdk-logs@0.220.0\n")).toBe(
+	test("drops the package a bun download failed for in install and update, keeping the error kind", () => {
+		expect(errorHead("bun install v1.4.4\nerror: ConnectionRefused downloading tarball @opentelemetry/sdk-logs@0.220.0\n", "install")).toBe(
 			"error: ConnectionRefused downloading tarball <package>",
 		);
-		expect(errorHead("Resolving dependencies\nerror: Timeout downloading package manifest @oh-my-pi/pi-utils\n")).toBe(
+		expect(errorHead("Resolving dependencies\nerror: Timeout downloading package manifest @oh-my-pi/pi-utils\n", "update")).toBe(
 			"error: Timeout downloading package manifest <package>",
 		);
 	});
 
+	test("keeps the wording of other stages and of lines that only mention a download", () => {
+		expect(errorHead("(fail) downloading tarball verifies checksum\n", "test")).toBe("(fail) downloading tarball verifies checksum");
+		expect(errorHead("error: ConnectionRefused downloading tarball a@1.0.0\n", "check")).toBe(
+			"error: ConnectionRefused downloading tarball a@1.0.0",
+		);
+		expect(errorHead("error: ConnectionRefused downloading tarball a@1.0.0 while seeding\n", "install")).toBe(
+			"error: ConnectionRefused downloading tarball a@1.0.0 while seeding",
+		);
+	});
+
 	test("falls back to the last non-empty line, then to a placeholder", () => {
-		expect(errorHead("first\nlast line\n\n")).toBe("last line");
-		expect(errorHead("\n\n")).toBe("(no output)");
+		expect(errorHead("first\nlast line\n\n", "check")).toBe("last line");
+		expect(errorHead("\n\n", "check")).toBe("(no output)");
 	});
 });
 
