@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { Manifest } from "../deps.ts";
+import { installedHostPackages } from "../host-packages.ts";
 import { checkChainedCasts } from "./casts.ts";
 import { checkCrossExtensionImports } from "./cross-extension.ts";
 import { checkEntries } from "./entries.ts";
@@ -19,7 +20,7 @@ import {
 import { collectSources, deriveShape } from "./scope.ts";
 import type { TsHost } from "./ts-project.ts";
 import { openTsHost } from "./ts-project.ts";
-import { checkUpstreamExports, installedHostPackages } from "./upstream.ts";
+import { checkUpstreamExports } from "./upstream.ts";
 
 const GATES: readonly GateName[] = ["upstream-exports", "extension-entries", "cross-extension-imports", "test-presence", "chained-casts"];
 

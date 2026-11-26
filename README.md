@@ -116,3 +116,19 @@ The last line of the output is the result: `omomp-release: released X.Y.Z`, `omo
 ## Checks
 
 Each repository's own `.github/workflows/omomp-check.yml` runs on pushes to `main`, on pull requests and once a day. It checks this repository out from `main` and runs `bun deps.ts check <root>`; repositories on bun then run `bun install --frozen-lockfile`, `bun update` of the packages `bun deps.ts host <root>` lists, `bun run check` and `bun run test`; every repository ends with `bun verify.ts <root>`, which compares each file declared in `omomp-shared.json` with the same file under `src/` byte for byte. A fork that keeps its upstream's package manager and CI (omp-actual-terminal) runs only `deps.ts check` and `verify.ts`.
+
+This repository's own `omomp-check.yml` runs the same stages on itself, minus `verify.ts`, plus `bun deps.ts gate`. It checks the repository out twice: `repository` is what the stages check, and `omomp-shared`, with its own frozen install, runs the checker and the reporter, so a broken `bun install` or `bun update` of the checked repository does not take the reporter down with it.
+
+### Failure reporting
+
+`report.ts` turns one check run into one tracking issue. Each stage step has an id (`deps`, `install`, `update`, `check`, `test`, `gate`, `verify`) and tees its output to `<logs>/<id>.log`; a last step with `if: always() && !cancelled()` runs:
+
+```sh
+OMOMP_STEPS='${{ toJSON(steps) }}' bun omomp-shared/report.ts --root repository --logs "$RUNNER_TEMP/omomp-check" \
+  --summary "$RUNNER_TEMP/omomp-check/gate.json" --scope repo|shared --job-status ${{ job.status }} [--issue-repo <owner>/<repo>]
+```
+
+- **Run:** the first failing stage in the order above, its error head (the first error line of its log, or the gate summary's first failure) and its log cut to the first 40 and last 80 lines. A failed job with no failing stage is reported as `setup`.
+- **Versions:** the `@oh-my-pi/*` versions come from the gate summary, else from `node_modules` when install and update passed, else from `bun.lock`, else from what `package.json` declares.
+- **Issue:** with `--issue-repo` the reporter keeps one open issue per scope in that repository, found by the body marker `<!-- omomp-upstream-check:v1:<scope> -->`. A failure without that issue creates it; the same failure (same stage, error head and versions) only refreshes the latest-failure time and run link in its body, without a comment; a different failure rewrites it and adds a comment; a passing run comments with the passing run and closes it. Without `--issue-repo` it only prints the summary and writes the step summary. A repository reports into its own issues as scope `repo` with `${{ github.token }}` and `issues: write`; this repository opens no issues of its own and reports into `oh-my-omp/omp-config` as scope `shared` with the `oh-my-omp-shared-sync` app token.
+- **Events:** only `schedule`, and `workflow_dispatch` with `report_issue` set, run the issue-writing step (and here, the app token step); `push` and `pull_request` run the summary-only step.
