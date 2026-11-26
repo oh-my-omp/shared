@@ -208,6 +208,8 @@ describe("tracking state machine", () => {
 			firstFailed: "2026-11-20T18:00:00.000Z",
 		});
 		expect(findTracked(issues.slice(3), "shared")).toBeUndefined();
+		const damaged = body.replace("first-failed:2026-11-20T18:00:00.000Z", "first-failed:(edited)");
+		expect(findTracked([{ number: 5, url: "u", body: damaged }], "shared")?.firstFailed).toBeUndefined();
 		expect(body).toContain("| 首次失败 | 2026-11-20 18:00 UTC / 2026-11-21 03:00 GMT+9 |");
 		expect(body).toContain("| 最近一次失败 | 2026-11-27 18:03 UTC / 2026-11-28 03:03 GMT+9 |");
 	});

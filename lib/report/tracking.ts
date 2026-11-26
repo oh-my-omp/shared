@@ -53,8 +53,14 @@ export function findTracked(issues: readonly Issue[], scope: Scope): Tracked | u
 		url: issue.url,
 		body: issue.body,
 		fingerprint: FINGERPRINT.exec(issue.body)?.[1],
-		firstFailed: FIRST_FAILED.exec(issue.body)?.[1],
+		firstFailed: instantOf(FIRST_FAILED.exec(issue.body)?.[1]),
 	};
+}
+
+function instantOf(text: string | undefined): string | undefined {
+	if (text === undefined) return undefined;
+	const date = new Date(text);
+	return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function stageName(at: FailedAt): string {

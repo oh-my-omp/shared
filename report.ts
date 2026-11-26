@@ -92,7 +92,8 @@ function parseArgs(argv: readonly string[]): Options {
 	const required = (flag: string): string => values.get(flag) ?? usage(`${flag} is required`);
 	const issueRepo = values.get("--issue-repo");
 	const parts = issueRepo?.split("/");
-	if (parts !== undefined && (parts.length !== 2 || parts.some((part) => part === ""))) usage(`--issue-repo must be <owner>/<repo>, got '${issueRepo}'`);
+	if (parts !== undefined && (parts.length !== 2 || parts.some((part) => part === "")))
+		usage(`--issue-repo must be <owner>/<repo>, got '${issueRepo}'`);
 	return {
 		root: path.resolve(required("--root")),
 		logs: path.resolve(required("--logs")),
