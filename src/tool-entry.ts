@@ -1,54 +1,29 @@
+import type { EmbeddableSchema, IR } from "@oh-my-pi/omptype";
 import { validateToolArguments } from "@oh-my-pi/pi-ai";
 
-interface IrNode {
-	k: string;
-	members?: IrNode[];
-	el?: IrNode;
-	props?: IrProp[];
-	input?: IrNode;
-	base?: IrNode;
-	schema?: EmbeddableSchemaLike;
-	index?: IrNode;
-	extras?: string;
-	resolve?: () => IrNode;
-	v?: unknown;
-	[verbatimMarker]?: true;
-}
+type ObjectIR = Extract<IR, { k: "object" }>;
+type ArrayIR = Extract<IR, { k: "array" }>;
 
-interface IrProp {
-	key: PropertyKey;
-	opt: boolean;
-	val: IrNode;
-}
+const verbatimMarks = new WeakSet<object>();
 
-interface EmbeddableSchemaLike {
-	ir: IrNode;
-	[verbatimMarker]?: true;
-}
-
-const verbatimMarker: unique symbol = Symbol("omomp.verbatim");
-
-function isEmbeddableSchema(value: unknown): value is EmbeddableSchemaLike {
-	return (
-		(typeof value === "function" || (typeof value === "object" && value !== null)) &&
-		typeof (value as EmbeddableSchemaLike).ir === "object" &&
-		(value as EmbeddableSchemaLike).ir !== null &&
-		typeof (value as EmbeddableSchemaLike).ir.k === "string"
-	);
+function isEmbeddableSchema(value: unknown): value is EmbeddableSchema {
+	if (typeof value !== "function" && (typeof value !== "object" || value === null)) return false;
+	const ir: unknown = Reflect.get(value, "ir");
+	return typeof ir === "object" && ir !== null && typeof Reflect.get(ir, "k") === "string";
 }
 
 function markVerbatim(schema: unknown, visited: Set<unknown>): void {
 	if (!isEmbeddableSchema(schema) || visited.has(schema)) return;
 	visited.add(schema);
-	if (!(verbatimMarker in schema.ir)) {
-		schema.ir = { ...schema.ir, [verbatimMarker]: true };
+	if (!verbatimMarks.has(schema.ir)) {
+		schema.ir = { ...schema.ir };
+		verbatimMarks.add(schema.ir);
 	}
-	Object.defineProperty(schema, verbatimMarker, { value: true, enumerable: false, configurable: true });
+	verbatimMarks.add(schema);
 	for (const value of Object.values(schema)) {
 		if (isEmbeddableSchema(value)) markVerbatim(value, visited);
 	}
 	for (const key of Object.getOwnPropertySymbols(schema)) {
-		if (key === verbatimMarker) continue;
 		const value: unknown = Reflect.get(schema, key);
 		if (isEmbeddableSchema(value)) markVerbatim(value, visited);
 	}
@@ -67,9 +42,45 @@ interface FieldType {
 	verbatim: boolean;
 }
 
-function classifyField(node: IrNode, verbatim: boolean, depth: number): FieldType {
-	if (depth > 12) return { kind: "other", verbatim };
-	const own = verbatim || node[verbatimMarker] === true;
+function wrappedNode(node: IR): IR | undefined {
+	switch (node.k) {
+		case "morph":
+			return node.input;
+		case "refine":
+			return node.base;
+		case "sub":
+			return node.schema.ir;
+		case "unknown":
+		case "null":
+		case "undefined":
+		case "boolean":
+		case "bigint":
+		case "symbol":
+		case "never":
+		case "anyobject":
+		case "string":
+		case "number":
+		case "lit":
+		case "union":
+		case "intersection":
+		case "array":
+		case "tuple":
+		case "object":
+		case "instance":
+		case "alias":
+			return undefined;
+		default:
+			return assertNever(node);
+	}
+}
+
+function assertNever(node: never): never {
+	throw new Error(`unhandled omptype IR node ${JSON.stringify(node)}`);
+}
+
+function classifyField(node: IR, verbatim: boolean, depth: number): FieldType {
+	const own = verbatim || verbatimMarks.has(node);
+	if (depth > 12) return { kind: "other", verbatim: own };
 	switch (node.k) {
 		case "string":
 			return { kind: "string", verbatim: own };
@@ -81,33 +92,45 @@ function classifyField(node: IrNode, verbatim: boolean, depth: number): FieldTyp
 		case "anyobject":
 			return { kind: "object", verbatim: own };
 		case "union": {
-			const members = (node.members ?? []).filter((member) => member.k !== "undefined" && member.k !== "null");
-			if (members.length === 0) return { kind: "other", verbatim: own };
-			if (members.length === 1 && members[0] !== undefined) return classifyField(members[0], own, depth + 1);
+			const members = node.members.filter((member) => member.k !== "undefined" && member.k !== "null");
+			const [only] = members;
+			if (only === undefined) return { kind: "other", verbatim: own };
+			if (members.length === 1) return classifyField(only, own, depth + 1);
 			if (members.every((member) => member.k === "string" || (member.k === "lit" && typeof member.v === "string"))) {
 				return { kind: "string", verbatim: own };
 			}
 			return { kind: "other", verbatim: own };
 		}
+		case "sub":
+			return classifyField(node.schema.ir, own || verbatimMarks.has(node.schema), depth + 1);
 		case "morph":
-			return node.input === undefined ? { kind: "other", verbatim: own } : classifyField(node.input, own, depth + 1);
-		case "refine":
-			return node.base === undefined ? { kind: "other", verbatim: own } : classifyField(node.base, own, depth + 1);
-		case "sub": {
-			if (!isEmbeddableSchema(node.schema)) return { kind: "other", verbatim: own };
-			const inner = own || node.schema[verbatimMarker] === true || node.schema.ir[verbatimMarker] === true;
-			return classifyField(node.schema.ir, inner, depth + 1);
+		case "refine": {
+			const inner = wrappedNode(node);
+			return inner === undefined ? { kind: "other", verbatim: own } : classifyField(inner, own, depth + 1);
 		}
 		case "alias": {
-			if (node.resolve === undefined) return { kind: "other", verbatim: own };
+			let resolved: IR;
 			try {
-				return classifyField(node.resolve(), own, depth + 1);
+				resolved = node.resolve();
 			} catch {
 				return { kind: "other", verbatim: own };
 			}
+			return classifyField(resolved, own, depth + 1);
 		}
-		default:
+		case "unknown":
+		case "null":
+		case "undefined":
+		case "boolean":
+		case "bigint":
+		case "symbol":
+		case "never":
+		case "number":
+		case "intersection":
+		case "tuple":
+		case "instance":
 			return { kind: "other", verbatim: own };
+		default:
+			return assertNever(node);
 	}
 }
 
@@ -131,50 +154,37 @@ interface ElementRefusal {
 	index: number;
 }
 
-function objectNodeOf(node: IrNode, depth: number): IrNode | undefined {
-	if (depth > 12) return undefined;
-	switch (node.k) {
-		case "object":
-			return node;
-		case "morph":
-			return node.input === undefined ? undefined : objectNodeOf(node.input, depth + 1);
-		case "refine":
-			return node.base === undefined ? undefined : objectNodeOf(node.base, depth + 1);
-		case "sub":
-			return isEmbeddableSchema(node.schema) ? objectNodeOf(node.schema.ir, depth + 1) : undefined;
-		default:
-			return undefined;
+function objectNodeOf(node: IR): ObjectIR | undefined {
+	let current: IR | undefined = node;
+	for (let depth = 0; current !== undefined && depth <= 12; depth++) {
+		if (current.k === "object") return current;
+		current = wrappedNode(current);
 	}
+	return undefined;
 }
 
-function arrayNodeOf(node: IrNode, depth: number): IrNode | undefined {
-	if (depth > 12) return undefined;
-	switch (node.k) {
-		case "array":
-			return node;
-		case "morph":
-			return node.input === undefined ? undefined : arrayNodeOf(node.input, depth + 1);
-		case "refine":
-			return node.base === undefined ? undefined : arrayNodeOf(node.base, depth + 1);
-		case "sub":
-			return isEmbeddableSchema(node.schema) ? arrayNodeOf(node.schema.ir, depth + 1) : undefined;
-		default:
-			return undefined;
+function arrayNodeOf(node: IR): ArrayIR | undefined {
+	let current: IR | undefined = node;
+	for (let depth = 0; current !== undefined && depth <= 12; depth++) {
+		if (current.k === "array") return current;
+		current = wrappedNode(current);
 	}
+	return undefined;
 }
 
-function peelOptional(node: IrNode): IrNode {
-	if (node.k !== "union" || node.members === undefined) return node;
+function peelOptional(node: IR): IR {
+	if (node.k !== "union") return node;
 	const members = node.members.filter((member) => member.k !== "undefined" && member.k !== "null");
-	return members.length === 1 && members[0] !== undefined ? members[0] : node;
+	const [only] = members;
+	return members.length === 1 && only !== undefined ? only : node;
 }
 
-function structuralObjectNode(node: IrNode): IrNode | undefined {
-	return objectNodeOf(peelOptional(node), 0);
+function structuralObjectNode(node: IR): ObjectIR | undefined {
+	return objectNodeOf(peelOptional(node));
 }
 
-function structuralArrayNode(node: IrNode): IrNode | undefined {
-	return arrayNodeOf(peelOptional(node), 0);
+function structuralArrayNode(node: IR): ArrayIR | undefined {
+	return arrayNodeOf(peelOptional(node));
 }
 
 function pathJoin(base: string, key: string): string {
@@ -183,7 +193,7 @@ function pathJoin(base: string, key: string): string {
 
 type NormalizedField = { empty: true } | { empty: false; value: unknown; changed: boolean };
 
-function normalizeField(node: IrNode, value: unknown, path: string, refusals: ElementRefusal[], depth: number): NormalizedField {
+function normalizeField(node: IR, value: unknown, path: string, refusals: ElementRefusal[], depth: number): NormalizedField {
 	if (depth > 12) return { empty: false, value, changed: false };
 	const field = classifyField(node, false, 0);
 	if (isEmptyValue(value, field)) return { empty: true };
@@ -191,7 +201,7 @@ function normalizeField(node: IrNode, value: unknown, path: string, refusals: El
 
 	if (Array.isArray(value)) {
 		const arrayNode = structuralArrayNode(node);
-		if (arrayNode?.el === undefined) return { empty: false, value, changed: false };
+		if (arrayNode === undefined) return { empty: false, value, changed: false };
 		let changed = false;
 		const elements: unknown[] = [];
 		for (let index = 0; index < value.length; index++) {
@@ -208,7 +218,7 @@ function normalizeField(node: IrNode, value: unknown, path: string, refusals: El
 	}
 
 	const objectNode = structuralObjectNode(node);
-	if (objectNode?.props === undefined) return { empty: false, value, changed: false };
+	if (objectNode === undefined) return { empty: false, value, changed: false };
 	const input = value as Record<string, unknown>;
 	let changed = false;
 	const copy: Record<string, unknown> = {};
@@ -235,11 +245,11 @@ interface NormalizeResult {
 	refusals: ElementRefusal[];
 }
 
-function normalizeArguments(rootNode: IrNode, args: unknown): NormalizeResult {
+function normalizeArguments(rootNode: IR, args: unknown): NormalizeResult {
 	const refusals: ElementRefusal[] = [];
 	if (typeof args !== "object" || args === null || Array.isArray(args)) return { args, changed: false, refusals };
 	const objectNode = structuralObjectNode(rootNode);
-	if (objectNode?.props === undefined) return { args, changed: false, refusals };
+	if (objectNode === undefined) return { args, changed: false, refusals };
 	let changed = false;
 	const input = args as Record<string, unknown>;
 	const copy: Record<string, unknown> = {};
@@ -277,10 +287,10 @@ function refuseEmptyElements(name: string, refusals: ElementRefusal[], originalA
 	);
 }
 
-function stripUndeclaredRootKeys(rootNode: IrNode, args: unknown): unknown {
+function stripUndeclaredRootKeys(rootNode: IR, args: unknown): unknown {
 	if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
 	const objectNode = structuralObjectNode(rootNode);
-	if (objectNode?.props === undefined) return args;
+	if (objectNode === undefined) return args;
 	if (objectNode.index !== undefined) return args;
 	const declared = new Set<PropertyKey>();
 	for (const prop of objectNode.props) declared.add(prop.key);
@@ -297,16 +307,13 @@ function stripUndeclaredRootKeys(rootNode: IrNode, args: unknown): unknown {
 	return stripped ? out : args;
 }
 
-function normalizeAndValidate(toolName: string, toolCallId: unknown, parameters: unknown, params: unknown): unknown {
+function normalizeAndValidate(toolName: string, toolCallId: unknown, parameters: EmbeddableSchema, params: unknown): unknown {
 	const originalArgs = params;
-	const rootNode: IrNode | undefined = isEmbeddableSchema(parameters) ? parameters.ir : undefined;
+	const rootNode = parameters.ir;
 
-	let current: unknown = params;
-	if (rootNode !== undefined) {
-		const initial = normalizeArguments(rootNode, params);
-		if (initial.refusals.length > 0) refuseEmptyElements(toolName, initial.refusals, originalArgs);
-		current = initial.args;
-	}
+	const initial = normalizeArguments(rootNode, params);
+	if (initial.refusals.length > 0) refuseEmptyElements(toolName, initial.refusals, originalArgs);
+	let current: unknown = initial.args;
 
 	const id = typeof toolCallId === "string" ? toolCallId : "omomp";
 	const seen = new Set<string>();
@@ -315,7 +322,6 @@ function normalizeAndValidate(toolName: string, toolCallId: unknown, parameters:
 			{ name: toolName, description: "", parameters } as Parameters<typeof validateToolArguments>[0],
 			{ type: "toolCall", id, name: toolName, arguments: current as Record<string, unknown> },
 		);
-		if (rootNode === undefined) return validated;
 		const renormalized = normalizeArguments(rootNode, validated);
 		if (renormalized.refusals.length > 0) refuseEmptyElements(toolName, renormalized.refusals, originalArgs);
 		if (!renormalized.changed) {
@@ -337,12 +343,16 @@ interface OmompToolDefinitionShape {
 }
 
 export function omompTool<D extends OmompToolDefinitionShape>(definition: D): D {
+	const parameters = definition.parameters;
+	if (!isEmbeddableSchema(parameters)) {
+		throw new Error(`omompTool(${definition.name}): parameters must be a schema created by @oh-my-pi/omptype`);
+	}
 	const originalExecute = definition.execute as (toolCallId: unknown, params: unknown, ...rest: unknown[]) => unknown;
 	const wrapped = {
 		...definition,
 		lenientArgValidation: true,
 		execute(this: unknown, toolCallId: unknown, params: unknown, ...rest: unknown[]) {
-			const normalized = normalizeAndValidate(definition.name, toolCallId, definition.parameters, params);
+			const normalized = normalizeAndValidate(definition.name, toolCallId, parameters, params);
 			return originalExecute.call(this, toolCallId, normalized, ...rest);
 		},
 	};

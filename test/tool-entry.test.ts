@@ -236,6 +236,13 @@ for (const [flavor, parameters] of [
 	});
 }
 
+test("omompTool refuses parameters that are not an omptype schema", () => {
+	const jsonSchema = { type: "object", properties: { a: { type: "string" } } };
+	expect(() => omompTool({ name: "plain", parameters: jsonSchema, async execute() {} })).toThrow(
+		"omompTool(plain): parameters must be a schema created by @oh-my-pi/omptype",
+	);
+});
+
 describe("verbatim", () => {
 	test("the emitted JSON Schema is unchanged by the marker", () => {
 		const plain = z.string().optional().describe("input");

@@ -343,6 +343,54 @@ export function isProductionSource(file: string): boolean {
 
 const OMOMP_HINT = "wrap the definition in a direct omompTool(...) call from the shared src/tool-entry.ts";
 
+function customToolsValueProblem(tokens: Token[], valueStart: number): string | undefined {
+	if (textOf(tokens, valueStart) !== "[") return `customTools value is not an array literal; ${OMOMP_HINT}`;
+	const close = matchClose(tokens, valueStart);
+	if (arrayElementsAreOmompToolCalls(tokens, valueStart, close)) return undefined;
+	return `customTools element is not a direct omompTool(...) call; ${OMOMP_HINT}`;
+}
+
+function isAssignmentAt(tokens: Token[], index: number): boolean {
+	return textOf(tokens, index) === "=" && textOf(tokens, index + 1) !== "=" && textOf(tokens, index + 1) !== ">";
+}
+
+function enclosingObjectClose(tokens: Token[], start: number): number | undefined {
+	let depth = 0;
+	for (let index = start; index < tokens.length; index++) {
+		const text = textOf(tokens, index);
+		if (text === undefined) return undefined;
+		if (OPENERS[text] === true) depth += 1;
+		else if (CLOSERS[text] !== undefined) {
+			if (depth === 0) return text === "}" ? index : undefined;
+			depth -= 1;
+		}
+	}
+	return undefined;
+}
+
+function closesDestructuringPattern(tokens: Token[], close: number): boolean {
+	const next = textOf(tokens, close + 1);
+	if (next === ":" || next === "of" || next === "in") return true;
+	if (next === "=") return isAssignmentAt(tokens, close + 1);
+	if (next !== ")") return false;
+	const after = textOf(tokens, close + 2);
+	return after === "{" || after === ":" || (after === "=" && textOf(tokens, close + 3) === ">");
+}
+
+function customToolsProblem(tokens: Token[], index: number): string | undefined {
+	const previous = textOf(tokens, index - 1);
+	const next = textOf(tokens, index + 1);
+	if (previous === ".") {
+		return isAssignmentAt(tokens, index + 1) ? customToolsValueProblem(tokens, index + 2) : undefined;
+	}
+	const shorthand = (previous === "{" || previous === ",") && (next === "," || next === "}");
+	if (next !== ":" && !shorthand) return undefined;
+	const close = enclosingObjectClose(tokens, index + 1);
+	if (close !== undefined && closesDestructuringPattern(tokens, close)) return undefined;
+	if (next === ":") return customToolsValueProblem(tokens, index + 2);
+	return `customTools shorthand hides the value from the check; write customTools: [omompTool(...), ...] or ${OMOMP_HINT}`;
+}
+
 export function toolEntryGateProblems(file: string, text: string): GateProblem[] {
 	if (!isProductionSource(file)) return [];
 	const problems: GateProblem[] = [];
@@ -387,31 +435,9 @@ export function toolEntryGateProblems(file: string, text: string): GateProblem[]
 				}
 			}
 		}
-		if (
-			token.kind === "identifier" &&
-			token.text === "customTools" &&
-			textOf(tokens, index + 1) === ":" &&
-			textOf(tokens, index - 1) !== "."
-		) {
-			const valueStart = index + 2;
-			if (textOf(tokens, valueStart) !== "[") {
-				problems.push({
-					file,
-					line: token.line,
-					construction: "customTools",
-					detail: `customTools value is not an array literal; ${OMOMP_HINT}`,
-				});
-			} else {
-				const close = matchClose(tokens, valueStart);
-				if (!arrayElementsAreOmompToolCalls(tokens, valueStart, close)) {
-					problems.push({
-						file,
-						line: token.line,
-						construction: "customTools",
-						detail: `customTools element is not a direct omompTool(...) call; ${OMOMP_HINT}`,
-					});
-				}
-			}
+		if (token.kind === "identifier" && token.text === "customTools") {
+			const detail = customToolsProblem(tokens, index);
+			if (detail !== undefined) problems.push({ file, line: token.line, construction: "customTools", detail });
 		}
 		index += 1;
 	}

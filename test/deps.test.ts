@@ -144,6 +144,32 @@ describe("toolEntryGateProblems", () => {
 		expect(toolEntryGateProblems("seat.ts", text)).toHaveLength(1);
 	});
 
+	test("flags customTools shorthand handed to the host", () => {
+		const problems = toolEntryGateProblems("seat.ts", "createAgentSession({ model, customTools });\n");
+		expect(problems).toHaveLength(1);
+		expect(problems[0]?.construction).toBe("customTools");
+	});
+
+	test("checks the value assigned to a customTools member", () => {
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools = [bare];\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools = seatTools;\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("seat.ts", "opts.customTools = [omompTool(a)];\n")).toEqual([]);
+	});
+
+	test("ignores customTools reads, comparisons, destructuring and parameter types", () => {
+		const text = [
+			"const { customTools } = options;",
+			"const { customTools: tools } = options;",
+			"function f({ customTools }: Options) {}",
+			"function g(opts: { customTools: Tool[] }) {}",
+			"const h = ({ customTools }) => customTools;",
+			"for (const { customTools } of list) {}",
+			"if (opts.customTools === undefined) {}",
+			"use(opts.customTools);",
+		].join("\n");
+		expect(toolEntryGateProblems("seat.ts", text)).toEqual([]);
+	});
+
 	test("ignores commented-out and string occurrences", () => {
 		const text = [
 			"// pi.registerTool(definition);",
