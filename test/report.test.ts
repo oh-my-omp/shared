@@ -199,6 +199,11 @@ describe("tracking state machine", () => {
 			{ number: 9, url: "later", body },
 			{ number: 5, url: "shared-scope", body },
 			{ number: 1, url: "unrelated", body: "no marker" },
+			{
+				number: 2,
+				url: "quotes the marker",
+				body: `Acceptance: the reporter keeps one issue marked \`${markerOf("shared")}\`.\n${markerOf("shared")}`,
+			},
 		];
 		expect(findTracked(issues, "shared")).toEqual({
 			number: 5,

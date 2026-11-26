@@ -46,7 +46,9 @@ export function markerOf(scope: Scope): string {
 
 export function findTracked(issues: readonly Issue[], scope: Scope): Tracked | undefined {
 	const marker = markerOf(scope);
-	const [issue] = issues.filter((candidate) => candidate.body.includes(marker)).sort((left, right) => left.number - right.number);
+	const [issue] = issues
+		.filter((candidate) => candidate.body.split(/\r?\n/, 1)[0]?.trim() === marker)
+		.sort((left, right) => left.number - right.number);
 	if (issue === undefined) return undefined;
 	return {
 		number: issue.number,
