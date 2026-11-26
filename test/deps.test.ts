@@ -156,6 +156,18 @@ describe("toolEntryGateProblems", () => {
 		expect(toolEntryGateProblems("seat.ts", "opts.customTools = [omompTool(a)];\n")).toEqual([]);
 	});
 
+	test("ignores registerTool method signatures in inline types but checks calls", () => {
+		const text = [
+			"export default function entry(pi: { registerTool(tool: unknown): void }): void {",
+			"\tpi.registerTool(omompTool(def));",
+			"}",
+			"type Host = { on(event: string): void; registerTool(tool: Tool): void };",
+		].join("\n");
+		expect(toolEntryGateProblems("index.ts", text)).toEqual([]);
+		expect(toolEntryGateProblems("index.ts", "const r = ok ? pi.registerTool(def) : undefined;\n")).toHaveLength(1);
+		expect(toolEntryGateProblems("index.ts", "const r = ok ? registerTool(def) : undefined;\n")).toHaveLength(1);
+	});
+
 	test("checks compound, bracket and ternary hand-offs of customTools", () => {
 		expect(toolEntryGateProblems("seat.ts", "opts.customTools ??= [bare];\n")).toHaveLength(1);
 		expect(toolEntryGateProblems("seat.ts", "opts.customTools ||= seatTools;\n")).toHaveLength(1);

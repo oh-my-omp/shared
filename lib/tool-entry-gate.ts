@@ -473,7 +473,10 @@ export function toolEntryGateProblems(file: string, text: string): GateProblem[]
 			const open = callOpenParen(tokens, index);
 			if (open !== undefined && !isRegisterToolDeclaration(tokens, open)) {
 				const close = matchClose(tokens, open);
-				if (!firstArgIsOmompToolCall(tokens, open, close)) {
+				const before = textOf(tokens, index - 1);
+				const memberStart = before === "{" || before === ";" || before === ",";
+				const memberSignature = memberStart && textOf(tokens, close + 1) === ":";
+				if (!memberSignature && !firstArgIsOmompToolCall(tokens, open, close)) {
 					problems.push({
 						file,
 						line: token.line,
