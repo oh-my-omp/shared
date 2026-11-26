@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { type Manifest, parseManifest } from "../lib/deps.ts";
 import { openTsHost } from "../lib/gate/ts-project.ts";
-import { checkUpstreamExports, installedHostPackages } from "../lib/gate/upstream.ts";
+import { checkUpstreamExports } from "../lib/gate/upstream.ts";
 
 const scratch = realpathSync(mkdtempSync(path.join(tmpdir(), "omomp-gate-upstream-")));
 const root = path.join(scratch, "repo");
@@ -77,34 +77,6 @@ function sources(
 } {
 	return { production, nonProduction, tests: [] };
 }
-
-describe("installedHostPackages", () => {
-	test("returns no packages when the @oh-my-pi scope directory is absent", async () => {
-		const empty = mkdtempSync(path.join(scratch, "empty-"));
-		expect(await installedHostPackages(empty)).toEqual([]);
-	});
-
-	test("reads name and version from each installed package and sorts by name", async () => {
-		const synthetic = mkdtempSync(path.join(scratch, "synthetic-"));
-		const scope = path.join(synthetic, "node_modules", "@oh-my-pi");
-		const packageAt = (dir: string, value: object): void => {
-			mkdirSync(path.join(scope, dir), { recursive: true });
-			writeFileSync(path.join(scope, dir, "package.json"), JSON.stringify(value));
-		};
-		packageAt("zzz", { name: "@oh-my-pi/alpha", version: "1.0.0" });
-		packageAt("aaa", { name: "@oh-my-pi/zeta", version: "2.3.4" });
-		packageAt("no-version", { name: "@oh-my-pi/broken" });
-		writeFileSync(path.join(scope, "loose-file"), "");
-		packageAt("alpha", { name: "@oh-my-pi/alpha", version: "1.0.0" });
-		packageAt("zeta", { name: "@oh-my-pi/zeta", version: "2.3.4" });
-		packageAt(".ignored_zeta", { name: "@oh-my-pi/zeta", version: "0.9.0" });
-		symlinkSync(path.join(scope, "alpha"), path.join(scope, "alias"));
-		expect(await installedHostPackages(synthetic)).toEqual([
-			{ name: "@oh-my-pi/alpha", version: "1.0.0" },
-			{ name: "@oh-my-pi/zeta", version: "2.3.4" },
-		]);
-	});
-});
 
 describe("checkUpstreamExports", () => {
 	test("accepts the bundled root shim, declared wildcard subpaths and type-only imports", async () => {

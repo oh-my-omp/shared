@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { type Node, SyntaxKind } from "typescript/unstable/ast";
 import {
@@ -14,7 +14,7 @@ import {
 	isStringLiteral,
 } from "typescript/unstable/ast/is";
 import { DEPENDENCY_SECTIONS, type Manifest } from "../deps.ts";
-import type { HostPackage, ImportSite, SourceSet, UpstreamFailure } from "./model.ts";
+import type { ImportSite, SourceSet, UpstreamFailure } from "./model.ts";
 import { lineOf, type TsHost, type TsProject } from "./ts-project.ts";
 
 const HOST_SCOPE = "@oh-my-pi/";
@@ -51,30 +51,6 @@ type TableLoad =
 	| { readonly ok: false; readonly reason: string };
 
 type Resolution = { readonly ok: true; readonly path: string } | { readonly ok: false; readonly reason: string };
-
-export async function installedHostPackages(root: string): Promise<HostPackage[]> {
-	const scope = path.join(root, "node_modules", HOST_SCOPE.slice(0, -1));
-	let entries: Dirent[];
-	try {
-		entries = readdirSync(scope, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	const packages: HostPackage[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		let value: unknown;
-		try {
-			value = JSON.parse(readFileSync(path.join(scope, entry.name, "package.json"), "utf8"));
-		} catch {
-			continue;
-		}
-		if (!isRecord(value) || value.name !== `${HOST_SCOPE}${entry.name}` || typeof value.version !== "string") continue;
-		packages.push({ name: value.name, version: value.version });
-	}
-	packages.sort((left, right) => compareText(left.name, right.name));
-	return packages;
-}
 
 export async function checkUpstreamExports(input: {
 	readonly root: string;

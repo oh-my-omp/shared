@@ -1,0 +1,106 @@
+name: omomp-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      report_issue:
+        description: Maintain the tracking issue in oh-my-omp/omp-config as the daily run does.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+        with:
+          path: repository
+          persist-credentials: false
+
+      - uses: actions/checkout@main
+        with:
+          path: omomp-shared
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@main
+        with:
+          bun-version: latest
+
+      - name: Install the checker (frozen bun.lock)
+        working-directory: omomp-shared
+        run: |
+          bun install --frozen-lockfile
+          mkdir -p "$RUNNER_TEMP/omomp-check"
+
+      - name: Dependency convention
+        id: deps
+        run: bun omomp-shared/deps.ts check repository 2>&1 | tee "$RUNNER_TEMP/omomp-check/deps.log"
+
+      - name: Install dependencies (frozen bun.lock)
+        id: install
+        working-directory: repository
+        run: bun install --frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/omomp-check/install.log"
+
+      - name: Upgrade @oh-my-pi packages to their newest release
+        id: update
+        working-directory: repository
+        run: |
+          {
+            hosts="$(bun ../omomp-shared/deps.ts host .)"
+            if [ -n "$hosts" ]; then
+              bun update $hosts
+            fi
+          } 2>&1 | tee "$RUNNER_TEMP/omomp-check/update.log"
+
+      - name: Check
+        id: check
+        working-directory: repository
+        run: bun run check 2>&1 | tee "$RUNNER_TEMP/omomp-check/check.log"
+
+      - name: Test
+        id: test
+        working-directory: repository
+        run: bun run test 2>&1 | tee "$RUNNER_TEMP/omomp-check/test.log"
+
+      - name: Gate
+        id: gate
+        run: bun omomp-shared/deps.ts gate repository --summary "$RUNNER_TEMP/omomp-check/gate.json" 2>&1 | tee "$RUNNER_TEMP/omomp-check/gate.log"
+
+      - name: Summarize (no issue writing)
+        if: always() && !cancelled() && !(github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.report_issue == true))
+        env:
+          OMOMP_STEPS: ${{ toJSON(steps) }}
+        run: >-
+          bun omomp-shared/report.ts --root repository --logs "$RUNNER_TEMP/omomp-check"
+          --summary "$RUNNER_TEMP/omomp-check/gate.json" --scope shared --job-status ${{ job.status }}
+
+      - uses: actions/create-github-app-token@main
+        id: app
+        if: always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.report_issue == true))
+        with:
+          app-id: ${{ secrets.OMOMP_SYNC_APP_ID }}
+          private-key: ${{ secrets.OMOMP_SYNC_APP_PRIVATE_KEY }}
+          owner: oh-my-omp
+          repositories: omp-config
+
+      - name: Report to oh-my-omp/omp-config
+        if: always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.report_issue == true))
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          OMOMP_STEPS: ${{ toJSON(steps) }}
+        run: >-
+          bun omomp-shared/report.ts --root repository --logs "$RUNNER_TEMP/omomp-check"
+          --summary "$RUNNER_TEMP/omomp-check/gate.json" --scope shared --job-status ${{ job.status }}
+          --issue-repo oh-my-omp/omp-config

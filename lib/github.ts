@@ -17,10 +17,17 @@ export class GitHubError extends Error {
 const SHA = z.object({ sha: z.string() });
 const REF = z.object({ ref: z.string() });
 const PULL = z.object({ number: z.number(), html_url: z.string() });
+const ISSUE = z.object({ number: z.number(), html_url: z.string(), body: z.string().nullable(), pull_request: z.unknown().optional() });
+const COMMENT = z.object({ html_url: z.string() });
 
 export type Repository = { readonly name: string; readonly archived: boolean; readonly defaultBranch: string };
 export type PullRequest = { readonly number: number; readonly url: string };
 export type TreeEntry = { readonly path: string; readonly content: string };
+export type Issue = { readonly number: number; readonly url: string; readonly body: string };
+
+function issueOf(raw: z.infer<typeof ISSUE>): Issue {
+	return { number: raw.number, url: raw.html_url, body: raw.body ?? "" };
+}
 
 export class GitHub {
 	constructor(
@@ -122,5 +129,30 @@ export class GitHub {
 
 	async updatePull(repo: string, number: number, o: { title?: string; body?: string; state?: "closed" }): Promise<void> {
 		await this.json(PULL, "PATCH", `/repos/${this.owner}/${repo}/pulls/${number}`, o);
+	}
+
+	async openIssues(repo: string): Promise<Issue[]> {
+		const out: Issue[] = [];
+		for (let page = 1; ; page++) {
+			const batch = await this.json(z.array(ISSUE), "GET", `/repos/${this.owner}/${repo}/issues?state=open&per_page=100&page=${page}`);
+			out.push(...batch.filter((raw) => raw.pull_request === undefined).map(issueOf));
+			if (batch.length < 100) return out;
+		}
+	}
+
+	async createIssue(repo: string, o: { title: string; body: string }): Promise<Issue> {
+		return issueOf(await this.json(ISSUE, "POST", `/repos/${this.owner}/${repo}/issues`, o));
+	}
+
+	async updateIssue(
+		repo: string,
+		number: number,
+		o: { title?: string; body?: string; state?: "closed"; state_reason?: "completed" },
+	): Promise<Issue> {
+		return issueOf(await this.json(ISSUE, "PATCH", `/repos/${this.owner}/${repo}/issues/${number}`, o));
+	}
+
+	async commentIssue(repo: string, number: number, body: string): Promise<string> {
+		return (await this.json(COMMENT, "POST", `/repos/${this.owner}/${repo}/issues/${number}/comments`, { body })).html_url;
 	}
 }
