@@ -91,6 +91,7 @@ function readLog(logs: string, stage: Stage): string | undefined {
 export function normalizeHead(line: string): string {
 	return line
 		.replace(/\/home\/runner\/work\/[^/\s]+\/[^/\s]+\//g, "")
+		.replace(/\bdownloading (tarball|package manifest) \S+/g, "downloading $1 <package>")
 		.replace(/\b\d+(?:\.\d+)?\s?(?:ms|s)\b/g, "<duration>")
 		.replace(/\b[0-9a-f]{12,40}\b/g, "<sha>")
 		.replace(/\s+/g, " ")

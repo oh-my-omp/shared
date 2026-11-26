@@ -12,6 +12,7 @@ import {
 	fingerprintOf,
 	formatTime,
 	markerOf,
+	type Observation,
 	observe,
 	refreshedBody,
 	type Tracked,
@@ -103,6 +104,15 @@ describe("errorHead", () => {
 		expect(errorHead(log)).toBe("error: Cannot find module './x' from 'repository/a.ts' [<duration>] in <sha>");
 	});
 
+	test("drops the package a bun download failed for and keeps the error kind", () => {
+		expect(errorHead("bun install v1.4.4\nerror: ConnectionRefused downloading tarball @opentelemetry/sdk-logs@0.220.0\n")).toBe(
+			"error: ConnectionRefused downloading tarball <package>",
+		);
+		expect(errorHead("Resolving dependencies\nerror: Timeout downloading package manifest @oh-my-pi/pi-utils\n")).toBe(
+			"error: Timeout downloading package manifest <package>",
+		);
+	});
+
 	test("falls back to the last non-empty line, then to a placeholder", () => {
 		expect(errorHead("first\nlast line\n\n")).toBe("last line");
 		expect(errorHead("\n\n")).toBe("(no output)");
@@ -189,6 +199,32 @@ describe("tracking state machine", () => {
 		expect(fingerprintOf(failure, { source: "bun.lock", packages: [{ name: "@oh-my-pi/pi-coding-agent", version: "19.3.0" }] })).not.toBe(
 			fingerprint,
 		);
+	});
+
+	test("treats install failures that differ only in which package bun reported first as one failure, and a new error kind as a change", () => {
+		const installFailed = (log: string): Observation =>
+			observe(
+				observeRun({
+					steps: steps({ install: "failure" }),
+					jobStatus: "failure",
+					logs: directory({ "install.log": log }),
+					gateSummary: undefined,
+				}),
+				versions,
+			);
+		const first = installFailed(
+			"bun install v1.4.4\nerror: ConnectionRefused downloading tarball @opentelemetry/sdk-logs@0.220.0\n\nerror: ConnectionRefused downloading tarball y18n@5.0.8\n",
+		);
+		if (first.kind !== "failed") throw new Error("expected a failure");
+		const seen = tracked(first.fingerprint);
+		const reordered = installFailed(
+			"bun install v1.4.4\nerror: ConnectionRefused downloading tarball @opentelemetry/context-async-hooks@2.9.0\n",
+		);
+		expect(decide(reordered, seen).kind).toBe("refresh-body");
+		expect(decide(installFailed("error: Timeout downloading tarball @opentelemetry/sdk-logs@0.220.0\n"), seen).kind).toBe(
+			"update-and-comment",
+		);
+		expect(decide(installFailed("error: lockfile had changes, but lockfile is frozen\n"), seen).kind).toBe("update-and-comment");
 	});
 
 	test("finds the issue carrying this scope's marker and reads back the fingerprint and first failure it wrote", () => {
