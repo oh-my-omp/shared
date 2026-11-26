@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkCrossExtensionImports } from "../lib/gate/cross-extension.ts";
-import type { GateFailure, GatedShape } from "../lib/gate/model.ts";
+import type { GatedShape, GateFailure } from "../lib/gate/model.ts";
 import { openTsHost, type TsHost, type TsProject } from "../lib/gate/ts-project.ts";
 
 type Shape = Extract<GatedShape, { readonly kind: "plugin-multi" | "config-bundle" }>;
@@ -28,13 +28,13 @@ const FILES: Readonly<Record<string, string>> = {
 		'import { util } from "../b/util.ts";',
 		'import { shared } from "../_shared/x.ts";',
 		'import { local } from "./local.ts";',
-		"export const value = `${util} ${shared} ${local}`;",
+		"export const value = [util, shared, local];",
 		"",
 	].join("\n"),
 	"extensions/a/clean.ts": [
 		'import { shared } from "../_shared/x.ts";',
 		'import { local } from "./local.ts";',
-		"export const clean = `${shared} ${local}`;",
+		"export const clean = [shared, local];",
 		"",
 	].join("\n"),
 	"extensions/a/typed.ts": ['import type { Thing } from "../b/types.ts";', "export const thing: Thing = 1;", ""].join("\n"),
@@ -49,14 +49,12 @@ const FILES: Readonly<Record<string, string>> = {
 	"agent/extensions/a/x.ts": [
 		'import { y } from "../../extensions-last/b/y.ts";',
 		'import { i18n } from "../_shared/omomp-shared/i18n.ts";',
-		"export const x = `${y} ${i18n}`;",
+		"export const x = [y, i18n];",
 		"",
 	].join("\n"),
-	"agent/extensions/a/shared-only.ts": [
-		'import { i18n } from "../_shared/omomp-shared/i18n.ts";',
-		"export const shared = i18n;",
-		"",
-	].join("\n"),
+	"agent/extensions/a/shared-only.ts": ['import { i18n } from "../_shared/omomp-shared/i18n.ts";', "export const shared = i18n;", ""].join(
+		"\n",
+	),
 	"agent/extensions-last/b/y.ts": ["export const y = 2;", ""].join("\n"),
 	"agent/extensions/_shared/omomp-shared/i18n.ts": ['export const i18n = "text";', ""].join("\n"),
 };

@@ -83,6 +83,8 @@ const FILES: Readonly<Record<string, string>> = {
 		"// SAFETY: the whole class is audited",
 		"class Box {",
 		"\tvalue = (input as unknown) as string;",
+		"\t// SAFETY: the member is audited",
+		"\tother = input as unknown as number;",
 		"}",
 		"",
 		"declare const input: unknown;",
@@ -260,8 +262,10 @@ describe("checkChainedCasts", () => {
 		]);
 	});
 
-	test("accepts a marker above the declaration of a class that contains the cast", async () => {
-		expect(await castFailures("class-blessing.ts")).toEqual([]);
+	test("takes a class member, not the class, as the statement above which a marker counts", async () => {
+		expect(await castFailures("class-blessing.ts")).toEqual([
+			{ kind: "unmarked-chained-cast", file: "src/class-blessing.ts", line: 3, text: "(input as unknown) as string" },
+		]);
 	});
 
 	test("accepts a single cast", async () => {

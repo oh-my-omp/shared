@@ -9,11 +9,11 @@ import { checkUpstreamExports, installedHostPackages } from "../lib/gate/upstrea
 const scratch = realpathSync(mkdtempSync(path.join(tmpdir(), "omomp-gate-upstream-")));
 const root = path.join(scratch, "repo");
 
-function write(relative: string, text: string): string {
-	const file = path.join(root, relative);
+function write(relative: string, text: string, base = root): string {
+	const file = path.join(base, relative);
 	mkdirSync(path.dirname(file), { recursive: true });
 	writeFileSync(file, text);
-	return file;
+	return relative;
 }
 
 mkdirSync(root, { recursive: true });
@@ -71,7 +71,10 @@ function relativeTarget(target: string): string {
 	return path.relative(root, target).split(path.sep).join("/");
 }
 
-function sources(production: readonly string[], nonProduction: readonly string[] = []): {
+function sources(
+	production: readonly string[],
+	nonProduction: readonly string[] = [],
+): {
 	readonly production: readonly string[];
 	readonly nonProduction: readonly string[];
 	readonly tests: readonly string[];
@@ -167,7 +170,7 @@ describe("checkUpstreamExports", () => {
 
 	test("reports one module-table failure and stops path and symbol checks when the host module table is unavailable", async () => {
 		const isolated = path.join(scratch, "without-host");
-		mkdirSync(isolated, { recursive: true });
+		write(UNMANIFESTED, `import { z } from "@oh-my-pi/omptype/zod";\nimport "@oh-my-pi/pi-wire";\n`, isolated);
 		const result = await checkUpstreamExports({
 			root: isolated,
 			manifest: declared,

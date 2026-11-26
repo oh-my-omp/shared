@@ -9,8 +9,8 @@ import {
 	isImportEqualsDeclaration,
 	isStringLiteral,
 } from "typescript/unstable/ast/is";
-import type { GateFailure, GatedShape, ImportSite } from "./model";
-import { lineOf, type TsProject } from "./ts-project";
+import type { GatedShape, GateFailure, ImportSite } from "./model.ts";
+import { lineOf, type TsProject } from "./ts-project.ts";
 
 type Input = {
 	readonly root: string;

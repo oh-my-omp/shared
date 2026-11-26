@@ -89,15 +89,23 @@ function projectApi(project: Project): TsProject {
 		const source = await project.program.getSourceFile(file);
 		return source === undefined ? undefined : project.checker.getSymbolAtLocation(source);
 	};
+	const tables = new Map<number, Promise<ModuleExports>>();
+	const exportsOf = (module: TsSymbol): Promise<ModuleExports> => {
+		const cached = tables.get(module.id);
+		if (cached !== undefined) return cached;
+		const table = exportsOfModule(project, module);
+		tables.set(module.id, table);
+		return table;
+	};
 	return {
 		sourceFile: (file) => project.program.getSourceFile(file),
 		async exportsOfFile(file) {
 			const module = await moduleOf(file);
-			return module === undefined ? undefined : exportsOfModule(project, module);
+			return module === undefined ? undefined : exportsOf(module);
 		},
 		async exportsAt(moduleSpecifier) {
 			const module = await project.checker.getSymbolAtLocation(moduleSpecifier);
-			return module === undefined ? undefined : exportsOfModule(project, module);
+			return module === undefined ? undefined : exportsOf(module);
 		},
 		async defaultExport(file) {
 			const module = await moduleOf(file);
@@ -119,7 +127,9 @@ function configText(root: string, files: readonly string[]): string {
 	return JSON.stringify({
 		...(extended ? { extends: "./tsconfig.json" } : {}),
 		compilerOptions: {
-			...(extended ? {} : { target: "esnext", module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true, strict: true }),
+			...(extended
+				? {}
+				: { target: "esnext", module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true, strict: true }),
 			noEmit: true,
 			skipLibCheck: true,
 		},

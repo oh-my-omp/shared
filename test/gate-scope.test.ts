@@ -171,14 +171,7 @@ describe("collectSources", () => {
 			"src/.cache/z.ts": "export {};\n",
 		});
 		const sources = await collectSources(root, { kind: "plugin-single", entries: ["src/app.ts"] });
-		expect(sources.production).toEqual([
-			"src/app.ts",
-			"src/comp.tsx",
-			"src/extra_test.ts",
-			"src/mod.cts",
-			"src/mod.mts",
-			"src/types.d.ts",
-		]);
+		expect(sources.production).toEqual(["src/app.ts", "src/comp.tsx", "src/extra_test.ts", "src/mod.cts", "src/mod.mts", "src/types.d.ts"]);
 		expect(sources.nonProduction).toEqual([
 			"bench/d.ts",
 			"demo/e.ts",

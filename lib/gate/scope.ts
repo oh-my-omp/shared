@@ -47,10 +47,7 @@ function extensionShape(omp: unknown): Shape | undefined {
 }
 
 function shapeFromManifest(root: string, manifest: PackageJson): Shape {
-	if (
-		manifest.name === "omomp-shared" &&
-		statSync(path.join(root, "src"), { throwIfNoEntry: false })?.isDirectory() === true
-	) {
+	if (manifest.name === "omomp-shared" && statSync(path.join(root, "src"), { throwIfNoEntry: false })?.isDirectory() === true) {
 		return { kind: "shared-source" };
 	}
 	const extensionsDir = path.join(root, "agent", "extensions");
@@ -127,9 +124,7 @@ export async function collectSources(root: string, shape: GatedShape): Promise<S
 		if (TEST_FILE.test(base)) tests.push(file);
 		if (!TS_SOURCE.test(base)) continue;
 		if (shape.kind === "config-bundle" && !CONFIG_BUNDLE_SCOPES.some((scope) => file.startsWith(scope))) continue;
-		const nonProductionPath = segments.some(
-			(segment, index) => index < segments.length - 1 && NON_PRODUCTION_DIRS[segment] === true,
-		);
+		const nonProductionPath = segments.some((segment, index) => index < segments.length - 1 && NON_PRODUCTION_DIRS[segment] === true);
 		if (NON_PRODUCTION_SOURCE.test(base) || nonProductionPath) {
 			nonProduction.push(file);
 			continue;

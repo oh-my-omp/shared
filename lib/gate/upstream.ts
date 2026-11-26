@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { type Node, SyntaxKind } from "typescript/unstable/ast";
 import {
@@ -19,6 +19,16 @@ import { lineOf, type ModuleExports, type TsHost, type TsProject } from "./ts-pr
 
 const HOST_SCOPE = "@oh-my-pi/";
 const CODING_AGENT = "@oh-my-pi/pi-coding-agent";
+const BUNDLED_PACKAGES: Record<string, true> = {
+	"@oh-my-pi/pi-agent-core": true,
+	"@oh-my-pi/pi-ai": true,
+	"@oh-my-pi/pi-catalog": true,
+	"@oh-my-pi/pi-coding-agent": true,
+	"@oh-my-pi/pi-natives": true,
+	"@oh-my-pi/pi-tui": true,
+	"@oh-my-pi/pi-utils": true,
+};
+const DECLARATION_SUFFIXES: Record<string, string> = { ".js": ".d.ts", ".mjs": ".d.mts", ".cjs": ".d.cts" };
 const LEGACY_MODULE_SCRIPT = path.join("scripts", "legacy-pi-virtual-module.ts");
 
 type Site = {
@@ -34,10 +44,7 @@ type Site = {
 
 type SiteParts = Omit<Site, "file" | "line" | "index">;
 
-type Table = {
-	readonly entries: ReadonlyMap<string, string>;
-	readonly bundled: ReadonlySet<string>;
-};
+type Table = ReadonlyMap<string, string>;
 
 type TableLoad =
 	| { readonly ok: true; readonly table: Table; readonly piManifest: string }
@@ -75,7 +82,12 @@ export async function checkUpstreamExports(input: {
 	readonly sources: SourceSet;
 	readonly host: TsHost;
 }): Promise<{ readonly failures: UpstreamFailure[]; readonly nonProduction: UpstreamFailure[] }> {
-	const { root, manifest, sources, host } = input;
+	const { root, manifest, host } = input;
+	const sources: SourceSet = {
+		production: input.sources.production.map((file) => path.join(root, file)),
+		nonProduction: input.sources.nonProduction.map((file) => path.join(root, file)),
+		tests: input.sources.tests,
+	};
 	const project = await host.open([...sources.production, ...sources.nonProduction]);
 	const productionSites = await collectSites(root, project, sources.production);
 	const otherSites = await collectSites(root, project, sources.nonProduction);
@@ -109,13 +121,13 @@ function classifyValueSites(
 		if (!site.value) continue;
 		const [scope, name] = site.specifier.split("/");
 		const packageName = name === undefined ? site.specifier : `${scope}/${name}`;
-		if (table.bundled.has(packageName)) {
-			const importSpecifier = table.entries.get(site.specifier);
+		if (BUNDLED_PACKAGES[packageName] === true) {
+			const importSpecifier = table.get(site.specifier);
 			if (importSpecifier === undefined) {
 				bucket.push({ kind: "unbundled-subpath", site: importSite(site), package: packageName });
 				continue;
 			}
-			const resolved = resolveTarget(importSpecifier, piManifest);
+			const resolved = resolveTarget(importSpecifier, piManifest, root);
 			if (!resolved.ok) {
 				bucket.push({ kind: "unresolved-target", site: importSite(site), reason: resolved.reason });
 				continue;
@@ -124,14 +136,14 @@ function classifyValueSites(
 				bucket.push({ kind: "unresolved-target", site: importSite(site), reason: `${resolved.path} does not exist on disk` });
 				continue;
 			}
-			targets?.set(siteKey(site), resolved.path);
+			targets?.set(siteKey(site), declarationOf(resolved.path));
 			continue;
 		}
 		if (!declared(manifest, packageName)) {
 			bucket.push({ kind: "undeclared-package", site: importSite(site), package: packageName });
 			continue;
 		}
-		const resolved = resolveSpecifier(site.specifier, rootManifest);
+		const resolved = resolveSpecifier(site.specifier, rootManifest, root);
 		if (!resolved.ok) {
 			bucket.push({ kind: "unresolved-target", site: importSite(site), reason: resolved.reason });
 			continue;
@@ -140,7 +152,7 @@ function classifyValueSites(
 			bucket.push({ kind: "unresolved-target", site: importSite(site), reason: `${resolved.path} does not exist on disk` });
 			continue;
 		}
-		targets?.set(siteKey(site), resolved.path);
+		targets?.set(siteKey(site), declarationOf(resolved.path));
 	}
 }
 
@@ -210,12 +222,9 @@ async function checkSymbols(input: {
 }
 
 async function loadModuleTable(root: string): Promise<TableLoad> {
-	let piManifest: string;
-	try {
-		piManifest = Bun.resolveSync(`${CODING_AGENT}/package.json`, path.join(root, "package.json"));
-	} catch (error) {
-		return { ok: false, reason: `cannot resolve ${CODING_AGENT}/package.json from ${root}: ${messageOf(error)}` };
-	}
+	const located = resolveSpecifier(`${CODING_AGENT}/package.json`, path.join(root, "package.json"), root);
+	if (!located.ok) return { ok: false, reason: `cannot resolve ${CODING_AGENT}/package.json from ${root}: ${located.reason}` };
+	const piManifest = located.path;
 	const script = path.join(path.dirname(piManifest), LEGACY_MODULE_SCRIPT);
 	let loaded: unknown;
 	try {
@@ -240,9 +249,7 @@ async function loadModuleTable(root: string): Promise<TableLoad> {
 		}
 		entries.set(item.key, item.importSpecifier);
 	}
-	const bundled = new Set<string>();
-	for (const key of entries.keys()) if (isBundledRoot(key)) bundled.add(key);
-	return { ok: true, table: { entries, bundled }, piManifest };
+	return { ok: true, table: entries, piManifest };
 }
 
 async function collectSites(root: string, project: TsProject, files: readonly string[]): Promise<Site[]> {
@@ -349,28 +356,35 @@ function hostSpecifier(node: Node | undefined): { readonly specifier: string; re
 	return node.text.startsWith(HOST_SCOPE) ? { specifier: node.text, node } : undefined;
 }
 
-function isBundledRoot(key: string): boolean {
-	if (!key.startsWith(HOST_SCOPE)) return false;
-	const name = key.slice(HOST_SCOPE.length);
-	return name.length > 0 && !name.includes("/");
-}
-
 function declared(manifest: Manifest | undefined, name: string): boolean {
 	if (manifest === undefined) return false;
 	return DEPENDENCY_SECTIONS.some((section) => manifest.sections.get(section)?.has(name) === true);
 }
 
-function resolveTarget(specifier: string, from: string): Resolution {
+function declarationOf(file: string): string {
+	const extension = path.extname(file);
+	const suffix = DECLARATION_SUFFIXES[extension];
+	if (suffix === undefined) return file;
+	const declaration = `${file.slice(0, -extension.length)}${suffix}`;
+	return existsSync(declaration) ? declaration : file;
+}
+function resolveTarget(specifier: string, from: string, root: string): Resolution {
 	if (path.isAbsolute(specifier)) return { ok: true, path: specifier };
-	return resolveSpecifier(specifier, from);
+	return resolveSpecifier(specifier, from, root);
 }
 
-function resolveSpecifier(specifier: string, from: string): Resolution {
+function resolveSpecifier(specifier: string, from: string, root: string): Resolution {
+	let resolved: string;
 	try {
-		return { ok: true, path: Bun.resolveSync(specifier, from) };
+		resolved = Bun.resolveSync(specifier, from);
 	} catch (error) {
 		return { ok: false, reason: messageOf(error) };
 	}
+	const modules = path.join(root, "node_modules");
+	const installed = existsSync(modules) ? realpathSync(modules) : modules;
+	const real = existsSync(resolved) ? realpathSync(resolved) : resolved;
+	if (real.startsWith(`${installed}${path.sep}`)) return { ok: true, path: resolved };
+	return { ok: false, reason: `it resolves to ${resolved}, outside ${modules}` };
 }
 
 function importSite(site: Site): ImportSite {
