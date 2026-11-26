@@ -15,7 +15,7 @@ import {
 } from "typescript/unstable/ast/is";
 import { DEPENDENCY_SECTIONS, type Manifest } from "../deps.ts";
 import type { HostPackage, ImportSite, SourceSet, UpstreamFailure } from "./model.ts";
-import { lineOf, type ModuleExports, type TsHost, type TsProject } from "./ts-project.ts";
+import { lineOf, type TsHost, type TsProject } from "./ts-project.ts";
 
 const HOST_SCOPE = "@oh-my-pi/";
 const CODING_AGENT = "@oh-my-pi/pi-coding-agent";
@@ -69,7 +69,7 @@ export async function installedHostPackages(root: string): Promise<HostPackage[]
 		} catch {
 			continue;
 		}
-		if (!isRecord(value) || typeof value.name !== "string" || typeof value.version !== "string") continue;
+		if (!isRecord(value) || value.name !== `${HOST_SCOPE}${entry.name}` || typeof value.version !== "string") continue;
 		packages.push({ name: value.name, version: value.version });
 	}
 	packages.sort((left, right) => compareText(left.name, right.name));
@@ -100,7 +100,7 @@ export async function checkUpstreamExports(input: {
 		classifyValueSites(productionSites, loaded.table, loaded.piManifest, manifest, root, failures, targets);
 		classifyValueSites(otherSites, loaded.table, loaded.piManifest, manifest, root, nonProduction);
 	}
-	await checkSymbols({ root, sources, host, productionSites, targets, failures });
+	await checkSymbols({ root, project, host, productionSites, targets, failures });
 	return {
 		failures: failures.sort(compareFailures),
 		nonProduction: nonProduction.sort(compareFailures),
@@ -158,38 +158,21 @@ function classifyValueSites(
 
 async function checkSymbols(input: {
 	readonly root: string;
-	readonly sources: SourceSet;
+	readonly project: TsProject;
 	readonly host: TsHost;
 	readonly productionSites: readonly Site[];
 	readonly targets: ReadonlyMap<string, string>;
 	readonly failures: UpstreamFailure[];
 }): Promise<void> {
-	const checked = input.productionSites.filter(
-		(site) => site.typeNames.length > 0 || (site.valueNames.length > 0 && input.targets.has(siteKey(site))),
-	);
-	if (checked.length === 0) return;
-	const project = await input.host.open([
-		...new Set([...input.sources.production, ...input.sources.nonProduction, ...input.targets.values()]),
-	]);
-	const moduleSpecifiers = new Map<string, Node>();
-	for (const site of await collectSites(input.root, project, input.sources.production)) {
-		moduleSpecifiers.set(siteKey(site), site.moduleSpecifier);
-	}
-	const exportTables = new Map<string, ModuleExports | undefined>();
-	const typeTables = new Map<string, ModuleExports | undefined>();
-	for (const site of checked) {
+	const hostProject = input.targets.size === 0 ? undefined : await input.host.open([...new Set(input.targets.values())], "host");
+	for (const site of input.productionSites) {
 		const target = input.targets.get(siteKey(site));
-		if (site.valueNames.length > 0 && target !== undefined) {
-			if (!exportTables.has(target)) exportTables.set(target, await project.exportsOfFile(target));
-			const exports = exportTables.get(target);
+		if (site.valueNames.length > 0 && target !== undefined && hostProject !== undefined) {
+			const exports = await hostProject.exportsOfFile(target);
 			if (exports === undefined) {
-				input.failures.push({
-					kind: "unresolved-target",
-					site: importSite(site),
-					reason: `TypeScript resolved no module for ${target}`,
-				});
+				input.failures.push({ kind: "unresolved-target", site: importSite(site), reason: `TypeScript resolved no module for ${target}` });
 			} else {
-				const targetText = relativePosix(input.root, target);
+				const targetText = displayPath(input.root, target);
 				for (const symbol of site.valueNames) {
 					const kind = exports.get(symbol);
 					if (kind === undefined) input.failures.push({ kind: "missing-export", site: importSite(site), symbol, target: targetText });
@@ -197,28 +180,26 @@ async function checkSymbols(input: {
 				}
 			}
 		}
-		if (site.typeNames.length > 0) {
-			const key = `${site.file}#${site.specifier}`;
-			if (!typeTables.has(key)) {
-				const node = moduleSpecifiers.get(siteKey(site));
-				typeTables.set(key, node === undefined ? undefined : await project.exportsAt(node));
-			}
-			const exports = typeTables.get(key);
-			if (exports === undefined) {
-				input.failures.push({
-					kind: "unresolved-target",
-					site: importSite(site),
-					reason: `TypeScript resolved no module for '${site.specifier}'`,
-				});
-			} else {
-				for (const symbol of site.typeNames) {
-					if (!exports.has(symbol)) {
-						input.failures.push({ kind: "missing-type-export", site: importSite(site), symbol, target: site.specifier });
-					}
-				}
-			}
+		if (site.typeNames.length === 0) continue;
+		const exports = await input.project.exportsAt(site.moduleSpecifier);
+		if (exports === undefined) {
+			input.failures.push({
+				kind: "unresolved-target",
+				site: importSite(site),
+				reason: `TypeScript resolved no module for '${site.specifier}'`,
+			});
+			continue;
+		}
+		for (const symbol of site.typeNames) {
+			if (!exports.has(symbol))
+				input.failures.push({ kind: "missing-type-export", site: importSite(site), symbol, target: site.specifier });
 		}
 	}
+}
+
+function displayPath(root: string, file: string): string {
+	const relative = relativePosix(root, file);
+	return relative.startsWith("../") ? file : relative;
 }
 
 async function loadModuleTable(root: string): Promise<TableLoad> {

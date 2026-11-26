@@ -28,8 +28,10 @@ export type TsProject = {
 	defaultExport(file: string): Promise<DefaultExport>;
 };
 
+export type Resolution = "repository" | "host";
+
 export type TsHost = {
-	open(files: readonly string[]): Promise<TsProject>;
+	open(files: readonly string[], resolution?: Resolution): Promise<TsProject>;
 	close(): Promise<void>;
 };
 
@@ -122,8 +124,8 @@ function projectApi(project: Project): TsProject {
 	};
 }
 
-function configText(root: string, files: readonly string[]): string {
-	const extended = existsSync(path.join(root, "tsconfig.json"));
+function configText(root: string, files: readonly string[], resolution: Resolution): string {
+	const extended = resolution === "repository" && existsSync(path.join(root, "tsconfig.json"));
 	return JSON.stringify({
 		...(extended ? { extends: "./tsconfig.json" } : {}),
 		compilerOptions: {
@@ -148,9 +150,9 @@ export function openTsHost(root: string): TsHost {
 		},
 	});
 	return {
-		async open(files) {
+		async open(files, resolution = "repository") {
 			const config = path.join(root, `.omomp-gate-${configs.size}.tsconfig.json`);
-			configs.set(config, configText(root, files));
+			configs.set(config, configText(root, files, resolution));
 			const snapshot = await api.updateSnapshot({ openProjects: [config] });
 			const project = snapshot.getProject(config);
 			if (project === undefined) throw new Error(`TypeScript opened no project for ${config}`);

@@ -54,7 +54,7 @@ const UNMANIFESTED = write(
 
 const host = openTsHost(root);
 const declared = manifestFor({ devDependencies: { "@oh-my-pi/omptype": "latest" } });
-const zodTarget = relativeTarget(Bun.resolveSync("@oh-my-pi/omptype/zod", path.join(root, "package.json")));
+const zodTarget = Bun.resolveSync("@oh-my-pi/omptype/zod", path.join(root, "package.json"));
 
 afterAll(async () => {
 	await host.close();
@@ -65,10 +65,6 @@ function manifestFor(value: object): Manifest {
 	const parsed = parseManifest(JSON.stringify(value));
 	if (!parsed.ok) throw new Error("fixture package.json must parse");
 	return parsed.manifest;
-}
-
-function relativeTarget(target: string): string {
-	return path.relative(root, target).split(path.sep).join("/");
 }
 
 function sources(
@@ -99,6 +95,10 @@ describe("installedHostPackages", () => {
 		packageAt("aaa", { name: "@oh-my-pi/zeta", version: "2.3.4" });
 		packageAt("no-version", { name: "@oh-my-pi/broken" });
 		writeFileSync(path.join(scope, "loose-file"), "");
+		packageAt("alpha", { name: "@oh-my-pi/alpha", version: "1.0.0" });
+		packageAt("zeta", { name: "@oh-my-pi/zeta", version: "2.3.4" });
+		packageAt(".ignored_zeta", { name: "@oh-my-pi/zeta", version: "0.9.0" });
+		symlinkSync(path.join(scope, "alpha"), path.join(scope, "alias"));
 		expect(await installedHostPackages(synthetic)).toEqual([
 			{ name: "@oh-my-pi/alpha", version: "1.0.0" },
 			{ name: "@oh-my-pi/zeta", version: "2.3.4" },
@@ -182,6 +182,30 @@ describe("checkUpstreamExports", () => {
 		const [failure] = result.failures;
 		if (failure?.kind !== "module-table-unavailable") throw new Error("expected a module table failure");
 		expect(failure.reason).toContain("pi-coding-agent");
+	});
+
+	test("reads host value exports with the host's resolution, not the repository's NodeNext tsconfig", async () => {
+		const nodeNext = path.join(scratch, "node-next");
+		write("index.ts", `import { logger, getAgentDir } from "@oh-my-pi/pi-utils";\nexport const used = [logger, getAgentDir];\n`, nodeNext);
+		symlinkSync(path.join(import.meta.dir, "..", "node_modules"), path.join(nodeNext, "node_modules"));
+		writeFileSync(path.join(nodeNext, "package.json"), JSON.stringify({ name: "node-next", type: "module" }));
+		writeFileSync(
+			path.join(nodeNext, "tsconfig.json"),
+			JSON.stringify({
+				compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022", strict: true, noEmit: true },
+			}),
+		);
+		const nodeNextHost = openTsHost(nodeNext);
+		try {
+			expect(
+				await checkUpstreamExports({ root: nodeNext, manifest: undefined, sources: sources(["index.ts"]), host: nodeNextHost }),
+			).toEqual({
+				failures: [],
+				nonProduction: [],
+			});
+		} finally {
+			await nodeNextHost.close();
+		}
 	});
 
 	test("rejects every non-bundled @oh-my-pi package when no manifest declares it", async () => {
