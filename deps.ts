@@ -1,15 +1,29 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { dependencyProblems, describeDependencyProblem, hostPackages, type Manifest, parseManifest, shimProblems } from "./lib/deps.ts";
+import { renderSummary, runGate, summaryJson } from "./lib/gate/run.ts";
 
-const USAGE = "usage: bun deps.ts check|host <repository root>";
+const USAGE = "usage: bun deps.ts check|host <repository root>\n       bun deps.ts gate <repository root> [--summary <file>]";
 
-const [command, arg] = Bun.argv.slice(2);
-if ((command !== "check" && command !== "host") || arg === undefined || Bun.argv.length > 4) {
+type Command = { readonly kind: "check" } | { readonly kind: "host" } | { readonly kind: "gate"; readonly summary: string | undefined };
+
+function parseCommand(args: readonly string[]): { readonly command: Command; readonly root: string } | undefined {
+	const [name, root, ...rest] = args;
+	if (root === undefined) return undefined;
+	if ((name === "check" || name === "host") && rest.length === 0) return { command: { kind: name }, root };
+	if (name !== "gate") return undefined;
+	if (rest.length === 0) return { command: { kind: "gate", summary: undefined }, root };
+	if (rest.length === 2 && rest[0] === "--summary" && rest[1] !== undefined) return { command: { kind: "gate", summary: rest[1] }, root };
+	return undefined;
+}
+
+const parsed = parseCommand(Bun.argv.slice(2));
+if (parsed === undefined) {
 	console.error(USAGE);
 	process.exit(2);
 }
-const root = path.resolve(arg);
+const { command } = parsed;
+const root = path.resolve(parsed.root);
 if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
 	console.error(`deps.ts: ${root} is not a directory`);
 	process.exit(2);
@@ -55,9 +69,22 @@ async function check(manifest: Manifest | undefined): Promise<0 | 1> {
 	return 1;
 }
 
-const manifest = await readManifest();
-if (command === "host") {
-	if (manifest !== undefined) for (const name of hostPackages(manifest)) console.log(name);
-	process.exit(0);
+async function gate(manifest: Manifest | undefined, summaryFile: string | undefined): Promise<0 | 1> {
+	const summary = await runGate(root, manifest);
+	for (const line of renderSummary(summary)) console.log(line);
+	if (summaryFile !== undefined) await Bun.write(path.resolve(summaryFile), summaryJson(summary));
+	return summary.failures.length === 0 ? 0 : 1;
 }
-process.exit(await check(manifest));
+
+const manifest = await readManifest();
+switch (command.kind) {
+	case "host":
+		if (manifest !== undefined) for (const name of hostPackages(manifest)) console.log(name);
+		process.exit(0);
+		break;
+	case "check":
+		process.exit(await check(manifest));
+		break;
+	case "gate":
+		process.exit(await gate(manifest, command.summary));
+}

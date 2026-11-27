@@ -4,6 +4,14 @@ Single source of the code that several oh-my-omp repositories copy: each consume
 
 `deps.ts` is the dependency check every repository's check runs: `bun deps.ts check <root>` fails on a pinned dependency, a non-`*` peer, a legacy pi or typebox package, or a tracked `declare module "@oh-my-pi/…"`; `bun deps.ts host <root>` lists the `@oh-my-pi` packages the check upgrades to their newest release before type-checking.
 
+`bun deps.ts gate <root> [--summary <file>]` checks a repository against the omp host it installed: run it after `bun install` and the host upgrade, from a checkout of this repository whose own dependencies are installed (it uses this repository's `typescript`).
+
+- **Shape:** the repository's shape comes from what it already declares, with no list kept anywhere: `shared-source` (`package.json` named `omomp-shared` with `src/`), `config-bundle` (`agent/extensions/` with `agent/extensions/_shared/package.json`), `plugin-single` or `plugin-multi` (one or several `omp.extensions` entries), otherwise `exempt`. An exempt repository passes with the reason printed and no gate run.
+- **Sources:** TypeScript files outside `node_modules/`, `dist/` and dot-directories; a `config-bundle` is scanned under `agent/extensions/` and `agent/extensions-last/` only. Files under `test/`, `tests/`, `eval/`, `bench/`, `demo/`, `research/`, `sandbox/` and `*.test.*` / `*.spec.*` files are non-production.
+- **Upstream exports:** every `@oh-my-pi/*` value import, `export … from` and literal `import()` in production code must load in the omp binary. A package bundled into the binary must be imported through a key of its module table (`collectBundledPiEntries()` of the installed `@oh-my-pi/pi-coding-agent`), so a subpath that only matches a `./*` export fails. Any other `@oh-my-pi` package must be declared in `package.json`, and the file its own `exports` resolve to must exist. Each named value must be a value export of the module the import runs (the legacy shim for a package root), and each `import type` name an export of the module TypeScript resolves. The same path checks on non-production files are listed apart and do not fail the gate.
+- **Gates by shape:** a plugin's `omp.extensions` entries exist and default-export a function; in a `plugin-multi` or `config-bundle`, no extension imports another extension's directory (shared code goes through `_shared/` or `omomp-shared/`); every gated repository has at least one test file; a chained cast (`x as unknown as T`) in production code carries `// SAFETY: <reason>` on its line or the line above.
+- **Output:** the shape, the installed `@oh-my-pi/*` versions, skipped gates with their reason and each failure by stage (`upstream-exports`, `ast-gates`); `--summary <file>` also writes them as JSON. The exit code is 1 when anything fails.
+
 ## release.ts
 
 `release.ts` is the daily release every omomp member runs. Each member's own `.github/workflows/omomp-release.yml` checks this repository out from `main` beside the member and runs it at the member's root. One run first restores the changelog's published sections against their tags (see [Run results](#run-results)). It then promotes the member's `## [Unreleased]` changelog section to a version and bumps every version file. It commits `chore: release X.Y.Z` on `main`. It moves `main`, the tag `vX.Y.Z` and the `release` branch in one atomic push, then creates the GitHub Release `vX.Y.Z` from that section.
@@ -108,3 +116,19 @@ The last line of the output is the result: `omomp-release: released X.Y.Z`, `omo
 ## Checks
 
 Each repository's own `.github/workflows/omomp-check.yml` runs on pushes to `main`, on pull requests and once a day. It checks this repository out from `main` and runs `bun deps.ts check <root>`; repositories on bun then run `bun install --frozen-lockfile`, `bun update` of the packages `bun deps.ts host <root>` lists, `bun run check` and `bun run test`; every repository ends with `bun verify.ts <root>`, which compares each file declared in `omomp-shared.json` with the same file under `src/` byte for byte. A fork that keeps its upstream's package manager and CI (omp-actual-terminal) runs only `deps.ts check` and `verify.ts`.
+
+This repository's own `omomp-check.yml` runs the same stages on itself, minus `verify.ts`, plus `bun deps.ts gate`. It checks the repository out twice: `repository` is what the stages check, and `omomp-shared`, with its own frozen install, runs the checker and the reporter, so a broken `bun install` or `bun update` of the checked repository does not take the reporter down with it.
+
+### Failure reporting
+
+`report.ts` turns one check run into one tracking issue. Each stage step has an id (`deps`, `install`, `update`, `check`, `test`, `gate`, `verify`) and tees its output to `<logs>/<id>.log`; a last step with `if: always() && !cancelled()` runs:
+
+```sh
+OMOMP_STEPS='${{ toJSON(steps) }}' bun omomp-shared/report.ts --root repository --logs "$RUNNER_TEMP/omomp-check" \
+  --summary "$RUNNER_TEMP/omomp-check/gate.json" --scope repo|shared --job-status ${{ job.status }} [--issue-repo <owner>/<repo>]
+```
+
+- **Run:** the first failing stage in the order above, its error head (the first error line of its log, or the gate summary's first failure, without what varies between runs of the same cause: runner paths, durations, hashes, and in `install` and `update` the package a bun download failed for, as in `error: ConnectionRefused downloading tarball <package>` and `error: GET https://registry.npmjs.org/<package> - 503`) and its log cut to the first 40 and last 80 lines. A failed job with no failing stage is reported as `setup`.
+- **Versions:** the `@oh-my-pi/*` versions come from the gate summary, else from `node_modules` when install and update passed, else from `bun.lock`, else from what `package.json` declares.
+- **Issue:** with `--issue-repo` the reporter keeps one open issue per scope in that repository, found by the body marker `<!-- omomp-upstream-check:v1:<scope> -->`. A failure without that issue creates it; the same failure (same stage, error head and versions) only refreshes the latest-failure time and run link in its body, without a comment; a different failure rewrites it and adds a comment; a passing run comments with the passing run and closes it. Without `--issue-repo` it only prints the summary and writes the step summary. A repository reports into its own issues as scope `repo` with `${{ github.token }}` and `issues: write`; this repository opens no issues of its own and reports into `oh-my-omp/omp-config` as scope `shared` with the `oh-my-omp-shared-sync` app token.
+- **Events:** only `schedule`, and `workflow_dispatch` with `report_issue` set, run the issue-writing step (and here, the app token step); `push` and `pull_request` run the summary-only step.
