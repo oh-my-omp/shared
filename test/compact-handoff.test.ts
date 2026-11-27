@@ -36,6 +36,7 @@ import {
 
 const REVISION_SHA256: Readonly<Record<number, string>> = {
 	2: "77037984eead661df466ec7524524e33e54efc0fbdd74e830b42ac5c15663c3b",
+	3: "cd9a05aa7001b813d80f3f22ae949621d3bc3dbd1b1d47835c3a7a22996cc14a",
 };
 
 type CompactHandoffModule = typeof import("../src/compact-handoff.ts");
@@ -298,6 +299,11 @@ describe("compact-handoff", () => {
 			defineStatelessNoiseGuard({ pluginId: "older-plugin", renderNoiseGuardDirective: () => "Ignore nags." }),
 		);
 		const current = getSharedCompactCoordinator();
+		current.store.contributions.set("legacy-stateful-null", {
+			kind: "stateful-handoff",
+			pluginId: "legacy-stateful-null",
+			evaluate: () => null,
+		});
 
 		class OlderCoordinator extends SharedCompactCoordinator {
 			override readonly revision = COMPACT_HANDOFF_REVISION - 1;
@@ -307,7 +313,9 @@ describe("compact-handoff", () => {
 		expect(adopted).not.toBeInstanceOf(OlderCoordinator);
 		expect(adopted.revision).toBe(COMPACT_HANDOFF_REVISION);
 		expect(adopted.store).toBe(current.store);
-		expect(adopted.listPluginIds()).toEqual(["older-plugin"]);
+		expect(adopted.listPluginIds()).toEqual(["older-plugin", "legacy-stateful-null"]);
+		const adoptedSnap = await runner.emitCompacting({ type: "session.compacting", sessionId: "s-legacy", messages: [] }, makeContext([]));
+		expect(adoptedSnap?.context?.some((line) => line.includes("[legacy-stateful-null]"))).toBe(false);
 
 		class NewerCoordinator extends SharedCompactCoordinator {
 			override readonly revision = COMPACT_HANDOFF_REVISION + 1;
@@ -408,13 +416,25 @@ describe("compact-handoff", () => {
 
 	test("one prompt for initial and update windows, one-line context items, both delivery modes, and hook error isolation", async () => {
 		expect(COMPACTION_PROMPT).toContain("## User Intent & Session Rulings");
-		expect(COMPACTION_PROMPT).toContain("## Decisions & Ruled-Out Approaches");
-		expect(COMPACTION_PROMPT).toContain("## Discovered Code Anchors & Contracts");
-		expect(COMPACTION_PROMPT).toContain("## Landed Milestones & Active Verification State");
-		expect(COMPACTION_PROMPT).toContain("## Handoff to Kept Tail");
+		expect(COMPACTION_PROMPT).toContain("## Decisions & Domain Dead Ends");
+		expect(COMPACTION_PROMPT).toContain("## Code Anchors & Verified Invocations");
+		expect(COMPACTION_PROMPT).toContain("## Landed Milestones & Executed Verifications");
+		expect(COMPACTION_PROMPT).not.toContain("## Handoff to Kept Tail");
+		expect(COMPACTION_PROMPT).not.toContain("Active uncommitted worktree/branch state");
+		expect(COMPACTION_PROMPT).not.toContain('"Fix X", "Verify Y"');
+		expect(COMPACTION_PROMPT).not.toContain("imperative second-person");
 		expect(COMPACTION_PROMPT).toContain("When a `<previous-summary>` block appears above, update that summary");
+		expect(COMPACTION_PROMPT).toContain("STRICT GUARDRAIL EXCLUSION");
 		expect(COMPACTION_PROMPT).not.toContain("Additional focus");
 		expect(COMPACTION_PROMPT).not.toMatch(/\d+k[- ]token/);
+		const schemaMatch = COMPACTION_PROMPT.match(/<output-schema>([\s\S]*?)<\/output-schema>/);
+		const headings = (schemaMatch?.[1] ?? "").split("\n").filter((line) => line.startsWith("## "));
+		expect(headings).toEqual([
+			"## User Intent & Session Rulings",
+			"## Decisions & Domain Dead Ends",
+			"## Code Anchors & Verified Invocations",
+			"## Landed Milestones & Executed Verifications",
+		]);
 
 		const runner = createMockHostRunner();
 		const pi = runner.createPluginApi();
@@ -493,7 +513,6 @@ describe("compact-handoff", () => {
 		expect(msgContent).toContain("delta-body");
 		expect(msgContent).not.toContain("managed-plugin/state");
 
-		// 3. Throwing contribution is caught & warned rather than crashing omp
 		registerCompactHandoff(
 			pi,
 			defineStatelessNoiseGuard({
@@ -507,5 +526,183 @@ describe("compact-handoff", () => {
 		const safeRes = await runner.emitCompacting({ type: "session.compacting", sessionId: "err", messages: [] }, freshCtx);
 		expect(safeRes).toBeUndefined();
 		expect(runner.warnings.some((w) => w.includes("session.compacting"))).toBe(true);
+	});
+
+	test("inactiveClaim emits single-line empty-state harness-provided exclusion when captureState returns null and stays silent when omitted", async () => {
+		const runner = createMockHostRunner();
+		const pi = runner.createPluginApi();
+
+		registerCompactHandoff(
+			pi,
+			defineStatefulHarnessHandoff<{ live: number }>({
+				pluginId: "claimed-empty-plugin",
+				inactiveClaim: "Zero live sessions at compaction;\ndo NOT carry forward prefix handles.",
+				captureState: () => null,
+				renderCompactPromptClaim: (s) => `Live sessions (${s.live})`,
+				renderPostCompactInjection: (s) => ({
+					source: "claimed-empty-plugin/state",
+					delivery: "delta-stream",
+					content: `live=${s.live}`,
+				}),
+			}),
+		);
+		registerCompactHandoff(
+			pi,
+			defineStatefulHarnessHandoff<{ rules: number }>({
+				pluginId: "silent-empty-plugin",
+				captureState: () => null,
+				renderCompactPromptClaim: (s) => `Rules (${s.rules})`,
+				renderPostCompactInjection: () => ({
+					source: "silent-empty-plugin/state",
+					delivery: "plugin-managed",
+				}),
+			}),
+		);
+		registerCompactHandoff(
+			pi,
+			defineStatefulHarnessHandoff<{ rules: number }>({
+				pluginId: "blank-empty-plugin",
+				inactiveClaim: "   \n  ",
+				captureState: () => null,
+				renderCompactPromptClaim: (s) => `Blank (${s.rules})`,
+				renderPostCompactInjection: () => ({
+					source: "blank-empty-plugin/state",
+					delivery: "plugin-managed",
+				}),
+			}),
+		);
+
+		const ctx = makeContext([]);
+		const res = await runner.emitCompacting({ type: "session.compacting", sessionId: "s-empty", messages: [] }, ctx);
+		const prepared = getSharedCompactCoordinator().getLastPrepared(ctx.sessionManager);
+		expect(prepared?.activeHandoffs).toEqual([]);
+		expect(prepared?.inactiveStatefulPluginIds).toEqual(["claimed-empty-plugin", "silent-empty-plugin", "blank-empty-plugin"]);
+		const items = res?.context ?? [];
+		expect(items).toContain(
+			"harness-provided [claimed-empty-plugin] Zero live sessions at compaction; do NOT carry forward prefix handles.",
+		);
+		expect(items.some((line) => line.includes("[silent-empty-plugin]"))).toBe(false);
+		expect(items.some((line) => line.includes("[blank-empty-plugin]"))).toBe(false);
+	});
+
+	test("delta-stream post-compact injection evaluates live plugin state at before_agent_start rather than caching pre-compact state", async () => {
+		const runner = createMockHostRunner();
+		const pi = runner.createPluginApi();
+		let liveStatus: string | null = "running";
+
+		registerCompactHandoff(
+			pi,
+			defineStatefulHarnessHandoff<{ status: string }>({
+				pluginId: "live-pty-plugin",
+				inactiveClaim: "No PTY sessions.",
+				captureState: () => (liveStatus === null ? null : { status: liveStatus }),
+				renderCompactPromptClaim: (s) => `PTY state=${s.status}`,
+				renderPostCompactInjection: (s) => ({
+					source: "live-pty-plugin/sessions",
+					delivery: "delta-stream",
+					content: `pty=${s.status}`,
+				}),
+			}),
+		);
+
+		const u1: SessionEntry = {
+			type: "message",
+			id: "u1",
+			parentId: null,
+			timestamp: "2026-11-27T00:00:00.000Z",
+			message: { role: "user", content: "work", timestamp: 1 },
+		};
+		const cmp1: CompactionEntry = {
+			type: "compaction",
+			id: "cmp_live_1",
+			parentId: "u1",
+			timestamp: "2026-11-27T00:01:00.000Z",
+			summary: "summary-1",
+			firstKeptEntryId: "u1",
+			tokensBefore: 300000,
+		};
+		const ctx = makeContext([u1, cmp1]);
+
+		await runner.emitBeforeCompact(
+			{
+				type: "session_before_compact",
+				preparation: makePreparation(makeFileOps([])),
+				branchEntries: [u1],
+				signal: new AbortController().signal,
+			},
+			ctx,
+		);
+		const compactRes = await runner.emitCompacting({ type: "session.compacting", sessionId: "s-live", messages: [] }, ctx);
+		expect(compactRes?.context).toContain("harness-provided [live-pty-plugin] PTY state=running");
+
+		liveStatus = "exited(0)";
+		await runner.emitCompact({ type: "session_compact", compactionEntry: cmp1, fromExtension: false }, ctx);
+		const firstStart = await runner.emitBeforeAgentStart(
+			{ type: "before_agent_start", reason: "prompt", prompt: "next", systemPrompt: [] },
+			ctx,
+		);
+		expect(firstStart.length).toBe(1);
+		const firstContent = typeof firstStart[0]?.message === "object" ? String(firstStart[0].message.content) : "";
+		expect(firstContent).toContain("pty=exited(0)");
+		expect(firstContent).not.toContain("pty=running");
+
+		const repeatWithoutCompact = await runner.emitBeforeAgentStart(
+			{ type: "before_agent_start", reason: "prompt", prompt: "again", systemPrompt: [] },
+			ctx,
+		);
+		expect(repeatWithoutCompact).toEqual([]);
+
+		await runner.emitCompact({ type: "session_compact", compactionEntry: cmp1, fromExtension: false }, ctx);
+		const duplicateIdStart = await runner.emitBeforeAgentStart(
+			{ type: "before_agent_start", reason: "prompt", prompt: "dup", systemPrompt: [] },
+			ctx,
+		);
+		expect(duplicateIdStart).toEqual([]);
+
+		liveStatus = "running";
+		const cmp2: CompactionEntry = {
+			type: "compaction",
+			id: "cmp_live_2",
+			parentId: "u1",
+			timestamp: "2026-11-27T00:02:00.000Z",
+			summary: "summary-2",
+			firstKeptEntryId: "u1",
+			tokensBefore: 300000,
+		};
+		await runner.emitBeforeCompact(
+			{
+				type: "session_before_compact",
+				preparation: makePreparation(makeFileOps([])),
+				branchEntries: [u1],
+				signal: new AbortController().signal,
+			},
+			ctx,
+		);
+		liveStatus = null;
+		await runner.emitCompact({ type: "session_compact", compactionEntry: cmp2, fromExtension: false }, ctx);
+		const clearedBeforeStart = await runner.emitBeforeAgentStart(
+			{ type: "before_agent_start", reason: "prompt", prompt: "cleared", systemPrompt: [] },
+			ctx,
+		);
+		expect(clearedBeforeStart).toEqual([]);
+
+		liveStatus = "ready-direct";
+		const cmp3: CompactionEntry = {
+			type: "compaction",
+			id: "cmp_live_3",
+			parentId: "u1",
+			timestamp: "2026-11-27T00:03:00.000Z",
+			summary: "summary-3",
+			firstKeptEntryId: "u1",
+			tokensBefore: 300000,
+		};
+		await runner.emitCompact({ type: "session_compact", compactionEntry: cmp3, fromExtension: false }, ctx);
+		const directCompactStart = await runner.emitBeforeAgentStart(
+			{ type: "before_agent_start", reason: "prompt", prompt: "direct", systemPrompt: [] },
+			ctx,
+		);
+		expect(directCompactStart.length).toBe(1);
+		const directContent = typeof directCompactStart[0]?.message === "object" ? String(directCompactStart[0].message.content) : "";
+		expect(directContent).toContain("pty=ready-direct");
 	});
 });

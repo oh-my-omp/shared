@@ -7,6 +7,7 @@
 			"verify.ts",
 			"sync.ts",
 			"release.ts",
+			"report.ts",
 			"lib/**/*.ts",
 			"src/**/*.ts",
 			"src/**/*.json",
