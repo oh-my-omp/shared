@@ -236,6 +236,49 @@ for (const [flavor, parameters] of [
 	});
 }
 
+test("accessor description and parameters stay live: never read at registration, read per call", async () => {
+	let ready = false;
+	let narrow = false;
+	const wide = z.object({ op: z.enum(["run", "stop"]), note: z.string().optional() });
+	const strict = z.object({ op: z.enum(["run"]) });
+	const seen: unknown[] = [];
+	const definition = omompTool({
+		name: "live",
+		get description(): string {
+			if (!ready) throw new Error("Settings not initialized");
+			return narrow ? "narrow" : "wide";
+		},
+		get parameters() {
+			if (!ready) throw new Error("Settings not initialized");
+			return narrow ? strict : wide;
+		},
+		execute(_toolCallId: string, params: unknown) {
+			seen.push(params);
+			return Promise.resolve({ content: [] });
+		},
+	});
+	ready = true;
+	expect(definition.description).toBe("wide");
+	await executeWith(definition, { op: "stop", note: " " });
+	narrow = true;
+	expect(definition.description).toBe("narrow");
+	expect(await refusalOf(definition, { op: "stop" })).toContain('Validation failed for tool "live"');
+	expect(seen).toEqual([{ op: "stop" }]);
+});
+
+test("an accessor parameters that is not an omptype schema is refused when the tool runs", async () => {
+	const definition = omompTool({
+		name: "late",
+		get parameters() {
+			return { type: "object" };
+		},
+		execute() {
+			return Promise.resolve({ content: [] });
+		},
+	});
+	expect(await refusalOf(definition, {})).toBe("omompTool(late): parameters must be a schema created by @oh-my-pi/omptype");
+});
+
 test("omompTool refuses parameters that are not an omptype schema", () => {
 	const jsonSchema = { type: "object", properties: { a: { type: "string" } } };
 	expect(() => omompTool({ name: "plain", parameters: jsonSchema, async execute() {} })).toThrow(

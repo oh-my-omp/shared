@@ -6,7 +6,7 @@ Single source of the code that several oh-my-omp repositories copy: each consume
 
 ## tool-entry.ts
 
-`tool-entry.ts` is the registration entry every omomp plugin tool goes through: wrap the tool definition in `omompTool` before handing it to the host, both for `pi.registerTool(omompTool(definition))` and for every element of a new session's `customTools`. The wrapped definition is the same object shape; the plugin's `execute` no longer deals with empty values or undeclared keys. `parameters` must be a schema built with `@oh-my-pi/omptype` (its zod-like facade or TypeBox); `omompTool` throws at registration otherwise.
+`tool-entry.ts` is the registration entry every omomp plugin tool goes through: wrap the tool definition in `omompTool` before handing it to the host, both for `pi.registerTool(omompTool(definition))` and for every element of a new session's `customTools`. The wrapped definition keeps every property of the original, getters included, so a `description` or `parameters` getter is still read when the host reads it; the plugin's `execute` no longer deals with empty values or undeclared keys. `parameters` must be a schema built with `@oh-my-pi/omptype` (its zod-like facade or TypeBox): `omompTool` throws at registration when `parameters` is a plain property holding anything else, and a `parameters` getter is checked on each call instead.
 
 A string field whose value must reach the tool exactly as the model wrote it — terminal input, find-and-replace text — is declared verbatim by wrapping its complete field schema: `chars: verbatim(z.string().optional().describe("…"))` for the zod-like facade, `verbatim(Type.Optional(Type.String({ description: "…" })))` for TypeBox. The declaration changes nothing the model is sent.
 
