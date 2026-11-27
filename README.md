@@ -2,7 +2,20 @@
 
 Single source of the code that several oh-my-omp repositories copy: each consumer declares the files it uses in `omomp-shared.json`, a push sync opens PRs with the copies, and each repository's check compares them byte for byte.
 
-`deps.ts` is the dependency check every repository's check runs: `bun deps.ts check <root>` fails on a pinned dependency, a non-`*` peer, a legacy pi or typebox package, or a tracked `declare module "@oh-my-pi/…"`; `bun deps.ts host <root>` lists the `@oh-my-pi` packages the check upgrades to their newest release before type-checking.
+`deps.ts` is the dependency check every repository's check runs: `bun deps.ts check <root>` fails on a pinned dependency, a non-`*` peer, a legacy pi or typebox package, a tracked `declare module "@oh-my-pi/…"`, or production TypeScript that hands a tool definition to the host without the shared entry (a `registerTool(…)` argument that is not a direct `omompTool(…)` call, or a `customTools` value, written as a property or assigned, that is not an array literal of direct `omompTool(…)` calls, see [tool-entry.ts](#tool-entryts); `*.test.{ts,tsx,mts,cts}`, `*.spec.{ts,tsx}`, `*.d.ts` and files under a `test/`, `tests/`, `__tests__/` or `node_modules/` directory are not production); `bun deps.ts host <root>` lists the `@oh-my-pi` packages the check upgrades to their newest release before type-checking.
+
+## tool-entry.ts
+
+`tool-entry.ts` is the registration entry every omomp plugin tool goes through: wrap the tool definition in `omompTool` before handing it to the host, both for `pi.registerTool(omompTool(definition))` and for every element of a new session's `customTools`. The wrapped definition keeps every property of the original, getters included, so a `description` or `parameters` getter is still read when the host reads it; the plugin's `execute` no longer deals with empty values or undeclared keys. `parameters` must be a schema built with `@oh-my-pi/omptype` (its zod-like facade or TypeBox): `omompTool` throws at registration when `parameters` is a plain property holding anything else, and a `parameters` getter is checked on each call instead.
+
+A string field whose value must reach the tool exactly as the model wrote it — terminal input, find-and-replace text — is declared verbatim by wrapping its complete field schema: `chars: verbatim(z.string().optional().describe("…"))` for the zod-like facade, `verbatim(Type.Optional(Type.String({ description: "…" })))` for TypeBox. The declaration changes nothing the model is sent.
+
+The model-visible behaviour:
+
+- **Empty means not passed.** By the declared field type: a string field whose value trims to nothing, `[]` on an array field, `{}` on an object field, and `null` on any field are all the same as omitting the field. A required field given an empty value is refused exactly as if the field were missing. `0`, `false`, enum members, and the text `"[]"`/`"{}"` written on a string field are real values, never empty. Fields nested inside objects behave the same way; an object whose fields all drop out this way counts as empty itself.
+- **Verbatim string fields:** only `""` counts as not passed; whitespace-only values reach the tool unchanged.
+- **Empty array elements are a refusal.** An array element that is empty by its declared type — including an object element whose fields all drop out — refuses the whole call; the refusal names the field path and the element index. Elements are never silently dropped.
+- **Everything else is the host's validation.** Type errors, values outside an enum, and missing required fields are refused with the host's `Validation failed for tool` text; the host's repairs (stringified arrays, double-encoded keys, flattened array paths, enum whitespace, a single value wrapped in an array) apply before the tool runs. Keys the parameters do not declare never reach `execute`.
 
 ## release.ts
 
